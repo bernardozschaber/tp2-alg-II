@@ -19,7 +19,7 @@ class TestStage1Core(unittest.TestCase):
     """Suite de testes do Checkpoint 1."""
 
     def test_benchmark_suite_proportions_and_native_coords(self) -> None:
-        """Verifica se as 15 instâncias EUC_2D respeitam a divisão 80% (N<=42) / 20% (N in [45,75])."""
+        """Verifica se as 15 instâncias EUC_2D respeitam a divisão 80% (N<=40) / 20% (N in [45,75])."""
         instances = load_benchmark_suite()
         self.assertEqual(len(instances), 15)
 
@@ -30,7 +30,7 @@ class TestStage1Core(unittest.TestCase):
 
         for inst in main_band:
             self.assertGreaterEqual(inst.dimension, 10)
-            self.assertLessEqual(inst.dimension, 42)
+            self.assertLessEqual(inst.dimension, 40)
             self.assertEqual(inst.coords.shape, (inst.dimension, 2))
             self.assertEqual(inst.dist_matrix.shape, (inst.dimension, inst.dimension))
 

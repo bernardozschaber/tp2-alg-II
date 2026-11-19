@@ -4,7 +4,7 @@ Seguindo rigorosamente o enunciado do TP2:
 - Todas as instâncias possuem coordenadas 2D nativas da biblioteca TSPLIB95.
 - A função de custo utilizada é estritamente a distância euclidiana em 2D (EUC_2D).
 - O conjunto de teste contém 15 instâncias na faixa N in [10, 70]:
-  * 12 instâncias (80%) na Faixa Principal (N <= 42)
+  * 12 instâncias (80%) na Faixa Principal (N <= 40)
   * 3 instâncias (20%) na Faixa Limite / Estresse (N in [45, 75])
 """
 
@@ -14,7 +14,11 @@ import json
 from pathlib import Path
 from typing import Dict, List, Tuple
 
-# Coordenadas 2D nativas oficiais da TSPLIB95
+# Coordenadas 2D nativas da TSPLIB95 (conferidas contra os arquivos oficiais .tsp.gz em 2026-11-19).
+# ATENCAO: o EDGE_WEIGHT_TYPE original difere de EUC_2D em algumas delas
+# (burma14/ulysses16/ulysses22: GEO; att48: ATT; bays29: EXPLICIT + DISPLAY_DATA).
+# Aqui todas usam distancia euclidiana 2D sobre as coordenadas, logo os otimos
+# publicados na TSPLIB NAO se aplicam a essas instancias.
 RAW_TSPLIB_COORDS: Dict[str, List[Tuple[float, float]]] = {
     "burma14": [
         (16.47, 96.10), (16.47, 94.44), (20.09, 92.54), (22.39, 93.37),
@@ -45,19 +49,6 @@ RAW_TSPLIB_COORDS: Dict[str, List[Tuple[float, float]]] = {
         (830.0, 1770.0),  (490.0, 500.0),   (1840.0, 1240.0), (1260.0, 1500.0),
         (1280.0, 790.0),  (490.0, 2130.0),  (1460.0, 1420.0), (1260.0, 1910.0),
         (360.0, 1980.0),
-    ],
-    "dantzig42": [
-        (170.0, 85.0),  (163.0, 57.0),  (153.0, 38.0),  (155.0, 20.0),
-        (147.0, 8.0),   (136.0, 2.0),   (131.0, 15.0),  (124.0, 25.0),
-        (123.0, 41.0),  (116.0, 54.0),  (105.0, 58.0),  (97.0, 78.0),
-        (92.0, 72.0),   (108.0, 33.0),  (104.0, 19.0),  (100.0, 42.0),
-        (90.0, 27.0),   (83.0, 39.0),   (78.0, 24.0),   (73.0, 37.0),
-        (71.0, 62.0),   (64.0, 48.0),   (58.0, 35.0),   (51.0, 21.0),
-        (45.0, 33.0),   (38.0, 46.0),   (31.0, 16.0),   (22.0, 29.0),
-        (14.0, 42.0),   (6.0, 25.0),    (4.0, 53.0),    (11.0, 68.0),
-        (19.0, 82.0),   (28.0, 64.0),   (35.0, 79.0),   (44.0, 91.0),
-        (56.0, 75.0),   (67.0, 88.0),   (82.0, 94.0),   (112.0, 86.0),
-        (134.0, 74.0),  (151.0, 71.0),
     ],
     "att48": [
         (6734.0, 1453.0), (2233.0, 10.0),   (5530.0, 1424.0), (401.0, 841.0),
@@ -120,10 +111,10 @@ RAW_TSPLIB_COORDS: Dict[str, List[Tuple[float, float]]] = {
 }
 
 # Definição das 15 instâncias do benchmark:
-# - 12 instâncias na Faixa Principal (N <= 42) -> 80% do conjunto
+# - 12 instâncias na Faixa Principal (N <= 40) -> 80% do conjunto
 # - 3 instâncias na Faixa Limite / Estresse (N in [45, 75]) -> 20% do conjunto
 BENCHMARK_SPEC = [
-    # Faixa Principal (N <= 42) - 12 instâncias (80%)
+    # Faixa Principal (N <= 40) - 12 instâncias (80%)
     {"name": "eil51_n10", "source": "eil51", "n": 10, "band": "main"},
     {"name": "berlin52_n12", "source": "berlin52", "n": 12, "band": "main"},
     {"name": "burma14", "source": "burma14", "n": 14, "band": "main"},
@@ -135,7 +126,7 @@ BENCHMARK_SPEC = [
     {"name": "bays29", "source": "bays29", "n": 29, "band": "main"},
     {"name": "berlin52_n33", "source": "berlin52", "n": 33, "band": "main"},
     {"name": "eil51_n38", "source": "eil51", "n": 38, "band": "main"},
-    {"name": "dantzig42", "source": "dantzig42", "n": 42, "band": "main"},
+    {"name": "st70_n40", "source": "st70", "n": 40, "band": "main"},
     # Faixa Limite / Estresse (N in [45, 75]) - 3 instâncias (20%)
     {"name": "att48", "source": "att48", "n": 48, "band": "stress"},
     {"name": "berlin52", "source": "berlin52", "n": 52, "band": "stress"},

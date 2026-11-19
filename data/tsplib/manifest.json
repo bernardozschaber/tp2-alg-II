@@ -93,10 +93,10 @@
       "edge_weight_type": "EUC_2D"
     },
     {
-      "name": "dantzig42",
-      "file": "dantzig42.tsp",
-      "source": "dantzig42",
-      "dimension": 42,
+      "name": "st70_n40",
+      "file": "st70_n40.tsp",
+      "source": "st70",
+      "dimension": 40,
       "band": "main",
       "edge_weight_type": "EUC_2D"
     },
