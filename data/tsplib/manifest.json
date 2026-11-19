@@ -1,0 +1,128 @@
+{
+  "description": "Conjunto de teste TSPLIB com coordenadas 2D nativas (EUC_2D) - TP2 DCC207",
+  "total_instances": 15,
+  "main_band_count": 12,
+  "stress_band_count": 3,
+  "instances": [
+    {
+      "name": "eil51_n10",
+      "file": "eil51_n10.tsp",
+      "source": "eil51",
+      "dimension": 10,
+      "band": "main",
+      "edge_weight_type": "EUC_2D"
+    },
+    {
+      "name": "berlin52_n12",
+      "file": "berlin52_n12.tsp",
+      "source": "berlin52",
+      "dimension": 12,
+      "band": "main",
+      "edge_weight_type": "EUC_2D"
+    },
+    {
+      "name": "burma14",
+      "file": "burma14.tsp",
+      "source": "burma14",
+      "dimension": 14,
+      "band": "main",
+      "edge_weight_type": "EUC_2D"
+    },
+    {
+      "name": "ulysses16",
+      "file": "ulysses16.tsp",
+      "source": "ulysses16",
+      "dimension": 16,
+      "band": "main",
+      "edge_weight_type": "EUC_2D"
+    },
+    {
+      "name": "eil51_n18",
+      "file": "eil51_n18.tsp",
+      "source": "eil51",
+      "dimension": 18,
+      "band": "main",
+      "edge_weight_type": "EUC_2D"
+    },
+    {
+      "name": "berlin52_n20",
+      "file": "berlin52_n20.tsp",
+      "source": "berlin52",
+      "dimension": 20,
+      "band": "main",
+      "edge_weight_type": "EUC_2D"
+    },
+    {
+      "name": "ulysses22",
+      "file": "ulysses22.tsp",
+      "source": "ulysses22",
+      "dimension": 22,
+      "band": "main",
+      "edge_weight_type": "EUC_2D"
+    },
+    {
+      "name": "eil51_n25",
+      "file": "eil51_n25.tsp",
+      "source": "eil51",
+      "dimension": 25,
+      "band": "main",
+      "edge_weight_type": "EUC_2D"
+    },
+    {
+      "name": "bays29",
+      "file": "bays29.tsp",
+      "source": "bays29",
+      "dimension": 29,
+      "band": "main",
+      "edge_weight_type": "EUC_2D"
+    },
+    {
+      "name": "berlin52_n33",
+      "file": "berlin52_n33.tsp",
+      "source": "berlin52",
+      "dimension": 33,
+      "band": "main",
+      "edge_weight_type": "EUC_2D"
+    },
+    {
+      "name": "eil51_n38",
+      "file": "eil51_n38.tsp",
+      "source": "eil51",
+      "dimension": 38,
+      "band": "main",
+      "edge_weight_type": "EUC_2D"
+    },
+    {
+      "name": "dantzig42",
+      "file": "dantzig42.tsp",
+      "source": "dantzig42",
+      "dimension": 42,
+      "band": "main",
+      "edge_weight_type": "EUC_2D"
+    },
+    {
+      "name": "att48",
+      "file": "att48.tsp",
+      "source": "att48",
+      "dimension": 48,
+      "band": "stress",
+      "edge_weight_type": "EUC_2D"
+    },
+    {
+      "name": "berlin52",
+      "file": "berlin52.tsp",
+      "source": "berlin52",
+      "dimension": 52,
+      "band": "stress",
+      "edge_weight_type": "EUC_2D"
+    },
+    {
+      "name": "st70",
+      "file": "st70.tsp",
+      "source": "st70",
+      "dimension": 70,
+      "band": "stress",
+      "edge_weight_type": "EUC_2D"
+    }
+  ]
+}
