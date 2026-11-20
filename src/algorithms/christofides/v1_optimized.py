@@ -22,55 +22,11 @@ from typing import List, Optional, Tuple
 import networkx as nx
 import numpy as np
 
-from src.algorithms.common import TourResult, shortcut_walk
+from src.algorithms.common import TourResult, prim_dense, shortcut_walk
 from src.core.instance import TSPInstance
 from src.core.profiling import ProfilerSession
 
 ALGORITHM_NAME = "christofides_v1_optimized"
-
-
-def prim_dense(dist: np.ndarray, root: int = 0) -> Tuple[List[Tuple[int, int]], np.ndarray]:
-    """Computa a AGM em grafo completo denso pelo algoritmo de Prim sem heap.
-
-    Estruturas de dados (todas de tamanho N):
-      - `in_tree[v]`: indica se o vértice `v` já foi incorporado à AGM.
-      - `key[v]`    : menor peso conhecido ligando `v` a algum vértice em `in_tree`
-                      (definido como +inf após `v` entrar na árvore para permitir `argmin`
-                      direto sem alocar máscaras temporárias).
-      - `parent[v]` : vértice já presente na árvore que realiza `key[v]`.
-      - `degree[v]` : grau acumulado de `v` na AGM (evita nova passagem para filtrar ímpares).
-
-    Complexidade: Θ(N²) em tempo (N iterações de varredura linear vetorizada) e Θ(N) espaço.
-    """
-    n = dist.shape[0]
-    in_tree = np.zeros(n, dtype=bool)
-    key = np.full(n, np.inf, dtype=np.float64)
-    parent = np.full(n, -1, dtype=np.int64)
-    key[root] = 0.0
-
-    edges: List[Tuple[int, int]] = []
-    degree = np.zeros(n, dtype=np.int64)
-
-    for _ in range(n):
-        # Seleciona o vértice fora da árvore com menor aresta de corte.
-        u = int(np.argmin(key))
-        in_tree[u] = True
-        # Marca `key[u] = inf` in-place para que `u` nunca volte a ser escolhido por `argmin`.
-        key[u] = np.inf
-
-        if parent[u] >= 0:
-            p = int(parent[u])
-            edges.append((p, u))
-            degree[p] += 1
-            degree[u] += 1
-
-        # Relaxamento vetorizado: atualiza as chaves dos vértices ainda fora da árvore.
-        row = dist[u]
-        improve = (~in_tree) & (row < key)
-        key[improve] = row[improve]
-        parent[improve] = u
-
-    return edges, degree
 
 
 def min_weight_perfect_matching(dist: np.ndarray, odd: List[int]) -> List[Tuple[int, int]]:
