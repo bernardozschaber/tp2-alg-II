@@ -1,4 +1,4 @@
-"""Testes unitários da Etapa 2: Christofides (`v0`, `v1`) e heurísticas de warm-start."""
+"""Testes unitários da Etapa 2: Christofides, Twice-around-the-tree (`v0`, `v1`) e warm-starts."""
 
 from __future__ import annotations
 
@@ -10,6 +10,12 @@ from scipy.spatial import ConvexHull
 
 from src.algorithms.christofides import solve_v0, solve_v1
 from src.algorithms.christofides.v1_optimized import min_weight_perfect_matching
+from src.algorithms.twice_around import (
+    solve as twice_solve,
+    solve_v0 as twice_solve_v0,
+    solve_v1 as twice_solve_v1,
+)
+from src.algorithms.twice_around.v1_optimized import preorder_dfs_iterative
 from src.algorithms.warm_start import (
     WARM_STARTS,
     cheapest_insertion,
@@ -121,6 +127,89 @@ class TestChristofides(unittest.TestCase):
         self.assertGreater(res.to_row()["process_max_rss_kb"], 0.0)
 
 
+class TestTwiceAround(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.suite = load_benchmark_suite()
+        cls.opt = {}
+        for name in SMALL:
+            inst = load_tsplib_instance(name)
+            cls.opt[name], _ = held_karp(inst.dist_matrix)
+
+    def test_valid_tours_and_structural_bounds_all_instances(self) -> None:
+        """Confirma ciclo hamiltoniano válido e c(H) <= 2 * c(T) nas 15 instâncias."""
+        for inst in self.suite:
+            for solver in (twice_solve_v0, twice_solve_v1):
+                res = solver(inst)
+                with self.subTest(inst=inst.name, alg=res.algorithm):
+                    self.assertTrue(inst.validate_tour(res.tour))
+                    self.assertEqual(res.tour[0], 0)
+                    self.assertAlmostEqual(res.cost, inst.tour_cost(res.tour), places=6)
+                    self.assertGreaterEqual(res.extra["mst_max_degree"], 1)
+                    self.assertLessEqual(res.cost, 2.0 * res.extra["mst_cost"] + EPS)
+
+    def test_v0_v1_and_christofides_same_mst_cost(self) -> None:
+        """Confirma igualdade exata do custo da AGM entre Twice-around v0/v1 e Christofides v1."""
+        for inst in self.suite:
+            r0 = twice_solve_v0(inst)
+            r1 = twice_solve_v1(inst)
+            rc = solve_v1(inst)
+            with self.subTest(inst=inst.name):
+                self.assertAlmostEqual(r0.extra["mst_cost"], r1.extra["mst_cost"], places=6)
+                self.assertAlmostEqual(r1.extra["mst_cost"], rc.extra["mst_cost"], places=6)
+
+    def test_approximation_factor_against_exact_oracle(self) -> None:
+        """Confirma fator de aproximação OPT <= c(H) <= 2 * OPT e c(T) <= OPT."""
+        for name in SMALL:
+            inst = load_tsplib_instance(name)
+            opt = self.opt[name]
+            for solver in (twice_solve_v0, twice_solve_v1):
+                res = solver(inst)
+                with self.subTest(inst=name, alg=res.algorithm):
+                    self.assertGreaterEqual(res.cost, opt - EPS)
+                    self.assertLessEqual(res.cost, 2.0 * opt + EPS)
+                    self.assertLessEqual(res.extra["mst_cost"], opt + EPS)
+
+    def test_subroutine_profiling_present(self) -> None:
+        """Confirma registro de tempo e memória das subrotinas em Twice-around v0 e v1."""
+        inst = load_tsplib_instance("berlin52")
+
+        prof_v1 = ProfilerSession(track_memory=True)
+        res_v1 = twice_solve(inst, prof_v1)
+        subs_v1 = res_v1.profile["subroutines"]
+        for key in ("mst", "preorder"):
+            self.assertIn(key, subs_v1)
+            self.assertGreater(subs_v1[key]["elapsed_ns"], 0)
+        self.assertGreater(subs_v1["mst"]["peak_memory_bytes"], 0)
+        self.assertGreater(res_v1.to_row()["process_max_rss_kb"], 0.0)
+
+        prof_v0 = ProfilerSession(track_memory=True)
+        res_v0 = twice_solve_v0(inst, prof_v0)
+        subs_v0 = res_v0.profile["subroutines"]
+        for key in ("build_complete_graph", "mst", "eulerian_circuit", "shortcut"):
+            self.assertIn(key, subs_v0)
+            self.assertGreater(subs_v0[key]["elapsed_ns"], 0)
+        self.assertGreater(subs_v0["build_complete_graph"]["peak_memory_bytes"], 0)
+
+    def test_iterative_preorder_handles_deep_path_without_recursion_error(self) -> None:
+        """Confirma ausência de RecursionError em árvore-caminho profunda (N=2500 > limite padrão)."""
+        n_deep = 2500
+        edges = [(i, i + 1) for i in range(n_deep - 1)]
+        order = preorder_dfs_iterative(n_deep, edges, start=0)
+        self.assertEqual(order, list(range(n_deep)))
+
+    def test_round_to_int_consistency(self) -> None:
+        """Confirma consistência entre v0 e v1 quando a métrica EUC_2D é arredondada para inteiros."""
+        inst = load_tsplib_instance("berlin52_n12", round_to_int=True)
+        r0 = twice_solve_v0(inst)
+        r1 = twice_solve_v1(inst)
+        self.assertTrue(inst.validate_tour(r0.tour))
+        self.assertTrue(inst.validate_tour(r1.tour))
+        self.assertAlmostEqual(r0.extra["mst_cost"], r1.extra["mst_cost"], places=6)
+        self.assertLessEqual(r0.cost, 2.0 * r0.extra["mst_cost"] + EPS)
+        self.assertLessEqual(r1.cost, 2.0 * r1.extra["mst_cost"] + EPS)
+
+
 class TestWarmStarts(unittest.TestCase):
     def test_graham_scan_matches_scipy(self) -> None:
         for inst in load_benchmark_suite():
@@ -148,9 +237,8 @@ class TestWarmStarts(unittest.TestCase):
         for inst in load_benchmark_suite():
             for name in WARM_STARTS:
                 res = run_warm_start(name, inst)
-                if res is None:
-                    self.assertEqual(name, "twice_around")
-                    continue
+                self.assertIsNotNone(res, f"Warm-start '{name}' retornou None em {inst.name}")
+                assert res is not None
                 with self.subTest(inst=inst.name, ws=name):
                     self.assertTrue(inst.validate_tour(res.tour))
                     self.assertEqual(res.tour[0], 0)
@@ -162,9 +250,10 @@ class TestWarmStarts(unittest.TestCase):
             opt, _ = held_karp(inst.dist_matrix)
             for ws in WARM_STARTS:
                 res = run_warm_start(ws, inst)
-                if res is not None:
-                    with self.subTest(inst=name, ws=ws):
-                        self.assertGreaterEqual(res.cost, opt - EPS)
+                self.assertIsNotNone(res)
+                assert res is not None
+                with self.subTest(inst=name, ws=ws):
+                    self.assertGreaterEqual(res.cost, opt - EPS)
 
 
 if __name__ == "__main__":

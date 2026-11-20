@@ -86,15 +86,20 @@ class TestStage3BranchAndBound(unittest.TestCase):
         self.assertLess(r3.extra["nodes_expanded"], r2.extra["nodes_expanded"])
 
     def test_warm_start_pruning_impact(self) -> None:
-        """Confirma redução de nós expandidos com warm-starts mais apertados mantendo o ótimo."""
+        """Confirma redução de nós expandidos com as 5 estratégias de warm-start mantendo o ótimo."""
         r_cold = solve_v3(self.inst12, warm_start="cold_start")
         r_nn = solve_v3(self.inst12, warm_start="nearest_neighbor")
         r_ch = solve_v3(self.inst12, warm_start="convex_hull_insertion")
+        r_ta = solve_v3(self.inst12, warm_start="twice_around")
         r_chr = solve_v3(self.inst12, warm_start="christofides")
 
-        for res in (r_cold, r_nn, r_ch, r_chr):
+        for res in (r_cold, r_nn, r_ch, r_ta, r_chr):
             self.assertAlmostEqual(res.cost, self.opt12, places=4)
+            self.assertTrue(self.inst12.validate_tour(res.tour))
 
+        self.assertLess(r_ta.extra["initial_ub"], r_cold.extra["initial_ub"])
+        self.assertLessEqual(r_ta.extra["nodes_expanded"], r_cold.extra["nodes_expanded"])
+        self.assertLessEqual(r_nn.extra["nodes_expanded"], r_cold.extra["nodes_expanded"])
         self.assertLess(r_chr.extra["nodes_expanded"], r_cold.extra["nodes_expanded"])
         self.assertLess(r_ch.extra["nodes_expanded"], r_cold.extra["nodes_expanded"])
 
