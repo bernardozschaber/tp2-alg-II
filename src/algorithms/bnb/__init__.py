@@ -1,9 +1,15 @@
-"""Algoritmo Exato Branch-and-Bound para o TSP (Aulas 11 e 12) em 4 versões graduais:
+"""Implementações graduais do algoritmo exato Branch-and-Bound para o TSP simétrico.
 
-- v0_naive      : Fiel ao slide 15 da Aula 12 (Best-First Heap, cópia de listas, bound O(N²) em CPU)
-- v1_gpu        : 1ª Otimização — Avaliação de bounds e expansão em lote na GPU (--use-gpu)
-- v2_dfs_memory : 2ª Otimização — Refatoração de memória: Best-Child-First DFS in-place O(N) (+ --use-gpu)
-- v3_fast_bound : 3ª Otimização — Bound incremental O(1), bitmask inteiro, quebra de simetria (+ --use-gpu)
+Progressão das quatro versões (mesmo contrato de entrada/saída e métricas de busca):
+  - `v0`: Best-First Search (`heapq`), cópia explícita de listas de caminho e recálculo
+          completo do limite inferior em O(N²) por candidato.
+  - `v1`: Best-First Search com extração em lotes (`batch_size`) e avaliação paralelizada
+          de custos/limites inferiores via GPU (`--use-gpu` / CuPy) ou NumPy vetorizado.
+  - `v2`: Best-Child-First DFS *in-place* (memória estritamente Θ(N), `max_queue_size <= N`),
+          com pré-expansão da fronteira de nível 2 na GPU e avaliação vetorizada local.
+  - `v3`: Best-Child-First DFS *in-place* com atualização incremental do limite inferior em
+          Θ(1) escalar, conjunto de não visitados em bitmask inteiro, quebra de simetria
+          reversa em nível interno (`unvis_mask < (1 << v1)`) e pré-expansão GPU.
 """
 
 from .v0_naive import solve as solve_v0

@@ -1,5 +1,5 @@
 {
-  "description": "Conjunto de teste TSPLIB com coordenadas 2D nativas (EUC_2D) - TP2 DCC207",
+  "description": "Instâncias TSPLIB com coordenadas 2D nativas sob métrica EUC_2D",
   "total_instances": 15,
   "main_band_count": 12,
   "stress_band_count": 3,
@@ -10,7 +10,8 @@
       "source": "eil51",
       "dimension": 10,
       "band": "main",
-      "edge_weight_type": "EUC_2D"
+      "edge_weight_type": "EUC_2D",
+      "has_tsplib_opt_tour": false
     },
     {
       "name": "berlin52_n12",
@@ -18,7 +19,8 @@
       "source": "berlin52",
       "dimension": 12,
       "band": "main",
-      "edge_weight_type": "EUC_2D"
+      "edge_weight_type": "EUC_2D",
+      "has_tsplib_opt_tour": false
     },
     {
       "name": "burma14",
@@ -26,7 +28,8 @@
       "source": "burma14",
       "dimension": 14,
       "band": "main",
-      "edge_weight_type": "EUC_2D"
+      "edge_weight_type": "EUC_2D",
+      "has_tsplib_opt_tour": false
     },
     {
       "name": "ulysses16",
@@ -34,7 +37,8 @@
       "source": "ulysses16",
       "dimension": 16,
       "band": "main",
-      "edge_weight_type": "EUC_2D"
+      "edge_weight_type": "EUC_2D",
+      "has_tsplib_opt_tour": true
     },
     {
       "name": "eil51_n18",
@@ -42,7 +46,8 @@
       "source": "eil51",
       "dimension": 18,
       "band": "main",
-      "edge_weight_type": "EUC_2D"
+      "edge_weight_type": "EUC_2D",
+      "has_tsplib_opt_tour": false
     },
     {
       "name": "berlin52_n20",
@@ -50,7 +55,8 @@
       "source": "berlin52",
       "dimension": 20,
       "band": "main",
-      "edge_weight_type": "EUC_2D"
+      "edge_weight_type": "EUC_2D",
+      "has_tsplib_opt_tour": false
     },
     {
       "name": "ulysses22",
@@ -58,7 +64,8 @@
       "source": "ulysses22",
       "dimension": 22,
       "band": "main",
-      "edge_weight_type": "EUC_2D"
+      "edge_weight_type": "EUC_2D",
+      "has_tsplib_opt_tour": true
     },
     {
       "name": "eil51_n25",
@@ -66,7 +73,8 @@
       "source": "eil51",
       "dimension": 25,
       "band": "main",
-      "edge_weight_type": "EUC_2D"
+      "edge_weight_type": "EUC_2D",
+      "has_tsplib_opt_tour": false
     },
     {
       "name": "bays29",
@@ -74,7 +82,8 @@
       "source": "bays29",
       "dimension": 29,
       "band": "main",
-      "edge_weight_type": "EUC_2D"
+      "edge_weight_type": "EUC_2D",
+      "has_tsplib_opt_tour": true
     },
     {
       "name": "berlin52_n33",
@@ -82,7 +91,8 @@
       "source": "berlin52",
       "dimension": 33,
       "band": "main",
-      "edge_weight_type": "EUC_2D"
+      "edge_weight_type": "EUC_2D",
+      "has_tsplib_opt_tour": false
     },
     {
       "name": "eil51_n38",
@@ -90,7 +100,8 @@
       "source": "eil51",
       "dimension": 38,
       "band": "main",
-      "edge_weight_type": "EUC_2D"
+      "edge_weight_type": "EUC_2D",
+      "has_tsplib_opt_tour": false
     },
     {
       "name": "st70_n40",
@@ -98,7 +109,8 @@
       "source": "st70",
       "dimension": 40,
       "band": "main",
-      "edge_weight_type": "EUC_2D"
+      "edge_weight_type": "EUC_2D",
+      "has_tsplib_opt_tour": false
     },
     {
       "name": "att48",
@@ -106,7 +118,8 @@
       "source": "att48",
       "dimension": 48,
       "band": "stress",
-      "edge_weight_type": "EUC_2D"
+      "edge_weight_type": "EUC_2D",
+      "has_tsplib_opt_tour": true
     },
     {
       "name": "berlin52",
@@ -114,7 +127,8 @@
       "source": "berlin52",
       "dimension": 52,
       "band": "stress",
-      "edge_weight_type": "EUC_2D"
+      "edge_weight_type": "EUC_2D",
+      "has_tsplib_opt_tour": true
     },
     {
       "name": "st70",
@@ -122,7 +136,8 @@
       "source": "st70",
       "dimension": 70,
       "band": "stress",
-      "edge_weight_type": "EUC_2D"
+      "edge_weight_type": "EUC_2D",
+      "has_tsplib_opt_tour": true
     }
   ]
 }

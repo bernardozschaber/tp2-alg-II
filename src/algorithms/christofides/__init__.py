@@ -1,4 +1,4 @@
-"""Algoritmo de Christofides (1.5-aproximado) em versões graduais."""
+"""Implementações do algoritmo de Christofides em duas versões (`v0` baseline e `v1` otimizada)."""
 
 from .v0_naive import solve as solve_v0
 from .v1_optimized import solve as solve_v1

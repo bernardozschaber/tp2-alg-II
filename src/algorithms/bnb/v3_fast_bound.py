@@ -1,24 +1,28 @@
-"""Branch-and-Bound v3 (3ª Otimização — Tempo Assintótico O(1), Bitmask e Quebra de Simetria + GPU).
+"""Branch-and-Bound v3: DFS in-place Θ(N) com bound incremental Θ(1), bitmask e simetria.
 
-Acumula as melhorias de hardware (`v1_gpu`) e memória Θ(N) (`v2_dfs_memory`) e elimina os
-gargalos de tempo por nó expandido:
-  1. Atualização Incremental em Θ(1) do Limite Inferior:
-     Em vez de reconstruir vetores ou varrer N vértices a cada candidato, mantém a soma
-     residual dos vértices não visitados (`unvis_sum`) e atualiza o `bound` em 4 operações
-     aritméticas escalares O(1).
-  2. Representação de Visitados por Bitmask Inteiro (`unvisited_mask`):
-     Itera apenas sobre os bits ativos (`lowbit = rem & -rem`) usando tabela de lookup O(1),
-     eliminando varreduras lineares sobre vértices já visitados.
-  3. Quebra de Simetria Reversa por Bitmask em Nível Interno:
-     Para eliminar ciclos reversos redundantes (0 -> v1 -> ... -> v_{N-1} -> 0 equivalentes a
-     0 -> v_{N-1} -> ... -> v1 -> 0), impõe canonicamente v1 < v_{N-1}. Em representação
-     bitwise, se em qualquer nível intermediário `unvisited_mask < (1 << v1)`, significa
-     que todos os vértices restantes possuem índice menor que `v1` (logo é impossível
-     terminar em v_{N-1} > v1), permitindo podar a subárvore inteira em O(1).
-  4. Pré-expansão e Ordenação de Fronteira em Lote na GPU (`--use-gpu`):
-     Quando `use_gpu=True`, avalia a fronteira inicial de nível 2 ((N-1)(N-2) caminhos
-     0 -> v1 -> v2) em paralelo via `GPUBackend`, ordenando as subárvores mais promissoras
-     globalmente antes de disparar o núcleo recursivo O(1).
+Operação empírica e otimizações acumuladas sobre `v1_gpu` e `v2_dfs_memory`:
+  1. Acesso escalar nativo sem overhead de objetos NumPy: converte a matriz de distâncias e
+     os vetores pré-computados (`min1_v`, `min1_i`, `min2_v`, `pair_s`) em listas nativas
+     Python antes da recursão, evitando alocação de arrays temporários em cada nó.
+  2. Conjunto de vértices não visitados em bitmask inteiro (`unvis_mask`):
+     - O bit `1 << k` vale 1 se o vértice `k` ainda não entrou na rota parcial.
+     - Extrai o próximo vértice livre em Θ(1) usando `lowbit = rem & -rem` seguido de consulta
+       em tabela hash `bit_to_vertex[lowbit]` e remoção `rem ^= lowbit`.
+     - Como inteiros Python têm precisão arbitrária, suporta qualquer N (incluindo N > 64).
+  3. Atualização incremental do limite inferior em Θ(1) por filho:
+     - `root_other` (segunda aresta livre da raiz 0) é calculado uma única vez ao fixar `v1`
+       e permanece constante em toda a subárvore abaixo de `v1`.
+     - Para cada transição `(u -> k)`, o novo bound exige apenas 4 operações aritméticas:
+       `c_cost = cost + dist_u[k]`, `c_unvis = unvis_sum - pair_s[k]`, seleção de `k_other`
+       entre `min1_v[k]`/`min2_v[k]` e `0.5 * (2*c_cost + root_other + k_other + c_unvis)`.
+  4. Quebra de simetria reversa em nível interno via comparação bitwise Θ(1):
+     - Em grafos simétricos, `0 -> v1 -> ... -> v_{N-1} -> 0` tem o mesmo custo que seu
+       reverso `0 -> v_{N-1} -> ... -> v1 -> 0`. Impõe-se a orientação canônica `v1 < v_{N-1}`.
+     - Se em qualquer nó intermediário `unvis_mask < (1 << v1)` (com `unvis_mask != 0`),
+       todos os vértices ainda livres têm índice estritamente menor que `v1`; logo nenhuma
+       extensão desta subárvore poderá terminar com `v_{N-1} > v1`, permitindo podá-la em Θ(1).
+  5. Suporte a `--use-gpu`: avalia e ordena globalmente em lote na GPU a fronteira de nível 2
+     (caminhos `0 -> v1 -> v2` com `1 <= v1 <= N-2`) antes de disparar o núcleo recursivo Θ(1).
 """
 
 from __future__ import annotations
@@ -46,7 +50,7 @@ def solve(
     use_gpu: bool = False,
     profiler: Optional[ProfilerSession] = None,
 ) -> TourResult:
-    """Executa o Branch-and-Bound v3 (Bitmask + Bound Incremental Θ(1) + Simetria + GPU)."""
+    """Executa o Branch-and-Bound v3 (bitmask + bound incremental Θ(1) + quebra de simetria)."""
     prof = profiler if profiler is not None else ProfilerSession(track_memory=False)
     n = instance.dimension
     dist = instance.dist_matrix
@@ -54,7 +58,7 @@ def solve(
     backend = get_backend(use_gpu=use_gpu)
     t_start = time.perf_counter()
 
-    # 1. Inicialização do limite superior (Warm-Start)
+    # 1. Inicialização do limite superior (`best`) via warm-start.
     best = float("inf")
     best_tour: List[int] = []
     initial_ub = float("inf")
@@ -70,7 +74,7 @@ def solve(
             best_tour = list(ws_res.tour)
             initial_ub = best
 
-    # 2. Pré-computação para atualização incremental Θ(1) e tabelas bitwise
+    # 2. Pré-computação das tabelas de arestas mínimas e dicionário de bits em O(N² log N).
     with prof.profile("bnb_precompute_o1"):
         dist_dev, min1_val_dev, min1_idx_dev, min2_val_dev = backend.precompute_min_edges_device(
             dist
@@ -81,7 +85,7 @@ def solve(
         pair_sums_cpu = min1_val_cpu + min2_val_cpu
         root_total_sum = float(np.sum(pair_sums_cpu))
 
-        # Listas nativas em Python para acesso escalar O(1) sem overhead de boxing do NumPy
+        # Estruturas nativas Python para indexação escalar rápida no núcleo recursivo.
         dist_rows: List[List[float]] = dist.tolist()
         min1_v: List[float] = min1_val_cpu.tolist()
         min1_i: List[int] = [int(x) for x in min1_idx_cpu.tolist()]
@@ -89,7 +93,7 @@ def solve(
         pair_s: List[float] = pair_sums_cpu.tolist()
         bit_to_vertex = {1 << k: k for k in range(n)}
 
-    # 3. Núcleo DFS In-Place com Bitmask, Bound Incremental O(1) e Quebra de Simetria
+    # 3. Estado único mutável `path` (memória Θ(N)) e contadores da árvore de busca.
     path = [0] * n
     nodes_expanded = 0
     nodes_pruned_gen = 0
@@ -109,11 +113,13 @@ def solve(
         unvis_mask: int,
         stack_depth: int,
     ) -> None:
+        """Núcleo recursivo Best-Child-First DFS com avaliação escalar Θ(1) por transição."""
         nonlocal best, best_tour, nodes_expanded, nodes_pruned_gen, nodes_pruned_visit
         nonlocal max_depth, max_stack_depth, timed_out
 
         if timed_out:
             return
+        # Verifica timeout a cada 256 expansões para minimizar chamadas ao relógio.
         if (nodes_expanded & 255) == 0 and (time.perf_counter() - t_start) >= timeout_s:
             timed_out = True
             return
@@ -123,10 +129,9 @@ def solve(
         if stack_depth > max_stack_depth:
             max_stack_depth = stack_depth
 
-        # Caso base: todos os N vértices foram visitados (unvis_mask == 0)
+        # Caso base: bitmask zerada indica que todos os N vértices foram visitados.
         if unvis_mask == 0:
             nodes_expanded += 1
-            # Pela quebra de simetria, u (que é v_{N-1}) já satisfaz u > v1
             total_cost = cost + dist_rows[u][0]
             if total_cost < best - EPS:
                 best = total_cost
@@ -137,8 +142,8 @@ def solve(
                 nodes_pruned_gen += 1
             return
 
-        # Poda de simetria em nível interno O(1):
-        # Se todos os vértices não visitados têm índice < v1, é impossível terminar com v_{N-1} > v1
+        # Poda de simetria em nível interno Θ(1): se o maior índice livre é < v1, nenhum
+        # ciclo completando este prefixo pode satisfazer a orientação canônica v_{N-1} > v1.
         if unvis_mask < v1_bit:
             nodes_pruned_gen += 1
             return
@@ -146,7 +151,7 @@ def solve(
         nodes_expanded += 1
         dist_u = dist_rows[u]
 
-        # Avalia todos os filhos não visitados em Θ(1) por candidato
+        # Percorre somente os bits ativos de `unvis_mask` e computa cada bound em Θ(1).
         children: List[Tuple[float, int, float, float, int]] = []
         rem = unvis_mask
         is_last_choice = level == n - 1
@@ -156,6 +161,7 @@ def solve(
             rem ^= lowbit
             k = bit_to_vertex[lowbit]
 
+            # No último vértice do ciclo (v_{N-1}), impõe diretamente k > v1.
             if is_last_choice and k < v1:
                 nodes_pruned_gen += 1
                 continue
@@ -174,13 +180,14 @@ def solve(
         if not children:
             return
 
-        # Ordena localmente os filhos sobreviventes pelo menor bound (Best-Child-First)
+        # Explora primeiro os filhos com menor limite inferior (Best-Child-First).
         children.sort(key=lambda item: item[0])
 
-        for c_bound, k, c_cost, c_unvis, k_bit in children:
+        for pos, (c_bound, k, c_cost, c_unvis, k_bit) in enumerate(children):
             if c_bound >= best - EPS:
-                nodes_pruned_visit += 1
-                continue
+                # Como `children` está ordenado por bound crescente, todos os seguintes também >= best.
+                nodes_pruned_visit += len(children) - pos
+                break
             path[level] = k
             dfs_o1(
                 level + 1,
@@ -198,18 +205,19 @@ def solve(
 
     t_bnb_start = time.perf_counter()
     with prof.profile("bnb_tree_search"):
+        # Todos os bits 1..n-1 ligados (bit 0 desligado, pois a raiz 0 já está no caminho).
         full_unvis_mask = ((1 << n) - 1) ^ 1
         root_unvis_sum = root_total_sum - pair_s[0]
 
         if use_gpu and n >= 4:
-            # Pré-expansão em lote na GPU da fronteira de nível 2 (0 -> v1 -> v2)
-            nodes_expanded += 1  # raiz 0 expandida
+            # Avalia em lote único na GPU a fronteira de nível 2 (0 -> v1 -> v2) com v1 < n-1.
+            nodes_expanded += 1
             v1_list: List[int] = []
             v2_list: List[int] = []
             p_cost_list: List[float] = []
             unvis_sum_list: List[float] = []
 
-            for v1 in range(1, n - 1):  # v1 < n-1 pela quebra de simetria
+            for v1 in range(1, n - 1):
                 c1 = dist_rows[0][v1]
                 u1 = root_unvis_sum - pair_s[v1]
                 nodes_expanded += 1
@@ -239,6 +247,7 @@ def solve(
             promising_idx = np.flatnonzero(bounds < (best - EPS))
             nodes_pruned_gen += int(len(bounds) - len(promising_idx))
             order = promising_idx[np.argsort(bounds[promising_idx])]
+
             for pos, idx in enumerate(order):
                 i = int(idx)
                 b_val = float(bounds[i])
@@ -269,10 +278,11 @@ def solve(
                 if timed_out:
                     break
         else:
-            # Expansão da raiz (nível 1: escolha de v1 in {1, ..., n-2})
+            # Expansão da raiz em CPU: escolhe v1 in {1, ..., n-2} (n-1 nunca pode ser < v_{n-1}).
             nodes_expanded += 1
             lvl1_children: List[Tuple[float, int, float, float, float, int]] = []
-            for v1 in range(1, n - 1 if n >= 3 else n):
+            upper_v1 = n - 1 if n >= 3 else n
+            for v1 in range(1, upper_v1):
                 c1 = dist_rows[0][v1]
                 u1 = root_unvis_sum - pair_s[v1]
                 root_other = min2_v[0] if min1_i[0] == v1 else min1_v[0]
@@ -285,10 +295,10 @@ def solve(
                     nodes_pruned_gen += 1
 
             lvl1_children.sort(key=lambda item: item[0])
-            for b1, v1, c1, u1, root_other, v1_bit in lvl1_children:
+            for pos, (b1, v1, c1, u1, root_other, v1_bit) in enumerate(lvl1_children):
                 if b1 >= best - EPS:
-                    nodes_pruned_visit += 1
-                    continue
+                    nodes_pruned_visit += len(lvl1_children) - pos
+                    break
                 path[1] = v1
                 dfs_o1(
                     2,

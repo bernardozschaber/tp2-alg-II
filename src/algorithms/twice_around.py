@@ -1,21 +1,19 @@
-"""Twice-around-the-tree (2-aproximado) — CONTRATO para implementação pelo restante do grupo.
+"""Contrato de interface para o algoritmo aproximado Twice-around-the-tree.
 
-Assinatura esperada (já consumida pelo pipeline de warm-start e experimentos):
+Assinatura esperada para integração direta com os warm-starts e scripts de experimento:
 
     solve(instance: TSPInstance, profiler: ProfilerSession | None = None) -> TourResult
 
-Requisitos do contrato (Aula 13, slides do Twice-around-the-tree):
-  * `tour`: permutação de {0..N-1} começando em 0, sem repetir o vértice inicial.
-  * `cost`: `instance.tour_cost(tour)`.
-  * Profiling por subrotina usando `prof.profile(...)` com AO MENOS os nomes:
-      - "mst"          (árvore geradora mínima a partir da raiz 0)
-      - "preorder"     (caminhamento em pré-ordem / shortcutting)
-    para que os gráficos e regressões tratem os 3 algoritmos uniformemente.
-  * Sugestão: reaproveitar `prim_dense` de `src.algorithms.christofides.v1_optimized`
-    (mesma AGM do Christofides, facilitando comparações justas).
+Requisitos operacionais do contrato:
+  - Retornar `TourResult` com `tour` permutando `{0..N-1}` a partir do vértice `0` (sem
+    repetir `0` no final) e `cost == instance.tour_cost(tour)`.
+  - Instrumentar as subrotinas usando `prof.profile("mst")` e `prof.profile("preorder")`
+    para manter compatibilidade com as tabelas e gráficos de profiling.
+  - A função `prim_dense` em `src.algorithms.christofides.v1_optimized` pode ser
+    reaproveitada diretamente para o cálculo da AGM em Θ(N²).
 
-Enquanto `solve` levantar NotImplementedError, o warm-start "twice_around" é
-marcado como indisponível (NA) pelos experimentos, sem quebrar o restante.
+Enquanto a implementação não for integrada, `solve` lança `NotImplementedError`, tratado
+graciosamente por `warm_start.run_warm_start` retornando `None`.
 """
 
 from __future__ import annotations
@@ -30,6 +28,7 @@ ALGORITHM_NAME = "twice_around_the_tree"
 
 
 def solve(instance: TSPInstance, profiler: Optional[ProfilerSession] = None) -> TourResult:
+    """Ponto de entrada reservado para a implementação do Twice-around-the-tree."""
     raise NotImplementedError(
-        "Twice-around-the-tree: a ser implementado pelo restante do grupo (ver docstring do módulo)."
+        "Twice-around-the-tree pendente de integração (ver contrato na docstring do módulo)."
     )

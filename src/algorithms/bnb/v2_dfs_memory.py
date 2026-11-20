@@ -1,17 +1,18 @@
-"""Branch-and-Bound v2 (2ª Otimização — Refatoração de Memória: Best-Child-First DFS In-Place).
+"""Branch-and-Bound v2: Best-Child-First DFS in-place com memória Θ(N) e fronteira GPU.
 
-Resolve o gargalo severo de memória de `v0_naive` e `v1_gpu` (onde a fila de prioridades
-Best-First armazena cópias explícitas de listas para cada nó aberto na fronteira,
-crescendo exponencialmente em O(b^N * N)).
-
-Refatorações introduzidas nesta versão (mantendo suporte a `--use-gpu`):
-  1. Mudança da estratégia de exploração da árvore: de Best-First Search global (heap)
-     para Busca em Profundidade com Ordenação Local dos Filhos (*Best-Child-First DFS*).
-  2. Estado mutável *in-place*: utiliza um único vetor `path` de tamanho N e um único
-     vetor booleano `visited` de tamanho N durante toda a busca, reduzindo a
-     complexidade espacial da árvore de O(b^N * N) para Θ(N) estrito (`max_queue_size <= N`).
-  3. Avaliação dos filhos de cada nó via backend GPU/vetorizado (`--use-gpu`), ordenando
-     localmente os filhos sobreviventes pelo menor `bound` antes de descer recursivamente.
+Funcionamento operacional:
+  1. Elimina a fila de prioridades global (`heapq`) de `v0_naive` e `v1_gpu`, percorrendo a
+     árvore de busca em profundidade (DFS) com um único vetor mutável `path` (tamanho N) e
+     um único vetor booleano `visited` (tamanho N), restaurados ao desempilhar da recursão.
+     Com isso, o espaço ativo da árvore fica estritamente limitado a Θ(N) (`max_queue_size <= N`).
+  2. Em cada nó interno, calcula os novos custos e bounds de todos os candidatos livres de
+     uma vez usando operações vetorizadas NumPy locais (sem transferências PCIe repetidas
+     para vetores pequenos de tamanho <= N), descarta os filhos com `bound >= best - EPS`
+     e ordena os sobreviventes pelo menor `bound` antes de descer recursivamente.
+  3. Quando `--use-gpu` está ativo (e `N >= 4`), despacha a fronteira completa de nível 2
+     (todos os `(N-1)(N-2)` caminhos `0 -> v1 -> v2`) em um único lote para a GPU via
+     `GPUBackend.batch_evaluate_children_bounds`, ordenando globalmente as subárvores mais
+     promissoras antes de iniciar o DFS in-place em cada ramo sobrevivente.
 """
 
 from __future__ import annotations
@@ -38,7 +39,7 @@ def solve(
     use_gpu: bool = False,
     profiler: Optional[ProfilerSession] = None,
 ) -> TourResult:
-    """Executa o Branch-and-Bound v2 (DFS Best-Child In-Place com memória Θ(N) + --use-gpu)."""
+    """Executa o Branch-and-Bound v2 (DFS in-place Θ(N) com ordenação local e fronteira GPU)."""
     prof = profiler if profiler is not None else ProfilerSession(track_memory=False)
     n = instance.dimension
     dist = instance.dist_matrix
@@ -46,7 +47,7 @@ def solve(
     backend = get_backend(use_gpu=use_gpu)
     t_start = time.perf_counter()
 
-    # 1. Inicialização do limite superior (Warm-Start)
+    # 1. Inicialização do limite superior (`best`) via warm-start.
     best = float("inf")
     best_tour: List[int] = []
     initial_ub = float("inf")
@@ -62,7 +63,7 @@ def solve(
             best_tour = list(ws_res.tour)
             initial_ub = best
 
-    # 2. Pré-computação das menores arestas no dispositivo (GPU / Vetorizado)
+    # 2. Pré-computação das duas menores arestas incidentes (mantidas em CPU e, se ativa, na GPU).
     with prof.profile("bnb_gpu_precompute"):
         dist_dev, min1_val_dev, min1_idx_dev, min2_val_dev = backend.precompute_min_edges_device(
             dist
@@ -73,7 +74,7 @@ def solve(
         pair_sums_cpu = min1_val_cpu + min2_val_cpu
         root_total_sum = float(np.sum(pair_sums_cpu))
 
-    # 3. Busca Best-Child-First DFS In-Place (Memória Θ(N))
+    # 3. Estado único mutável in-place: alocado uma única vez com tamanho N.
     path = [0] * n
     visited = np.zeros(n, dtype=bool)
     visited[0] = True
@@ -86,6 +87,7 @@ def solve(
     timed_out = False
 
     def dfs(level: int, cost: float, unvis_sum: float, stack_depth: int) -> None:
+        """Expande recursivamente o estado atual `path[:level]` modificando `path`/`visited` in-place."""
         nonlocal best, best_tour, nodes_expanded, nodes_pruned_gen, nodes_pruned_visit
         nonlocal max_depth, max_stack_depth, timed_out
 
@@ -103,7 +105,7 @@ def solve(
         nodes_expanded += 1
         u = path[level - 1]
 
-        # Caso base: todos os N vértices visitados, fecha o ciclo com a raiz 0
+        # Caso base: todos os N vértices estão em `path`; avalia o retorno à raiz 0.
         if level == n:
             total_cost = cost + float(dist[u, 0])
             if total_cost < best - EPS:
@@ -115,38 +117,39 @@ def solve(
                 nodes_pruned_gen += 1
             return
 
-        # Avalia os candidatos não visitados via broadcasting NumPy local (evita latência PCIe
-        # de transferir m <= N elementos para a GPU em cada folha da recursão)
+        # Coleta os índices não visitados e avalia todos os filhos via broadcasting NumPy local.
         cands = np.flatnonzero(~visited)
         m = len(cands)
         if m == 0:
             return
 
         new_costs = cost + dist[u, cands]
+        # Segunda aresta livre da raiz 0: escalar fixo para level >= 2, ou vetor por candidato na raiz.
         if level >= 2:
             v1 = path[1]
             root_other = min2_val_cpu[0] if min1_idx_cpu[0] == v1 else min1_val_cpu[0]
         else:
             root_other = np.where(min1_idx_cpu[0] == cands, min2_val_cpu[0], min1_val_cpu[0])
 
+        # Segunda aresta livre de cada candidato `k` distinta da aresta de chegada `(u, k)`.
         k_other = np.where(min1_idx_cpu[cands] == u, min2_val_cpu[cands], min1_val_cpu[cands])
         rem_unvis = unvis_sum - pair_sums_cpu[cands]
         total_double = 2.0 * new_costs + root_other + k_other + rem_unvis
         bounds = np.ceil(total_double / 2.0 - EPS) if is_int else (total_double / 2.0)
 
-        # Filtra filhos já inviáveis na geração e ordena localmente os sobreviventes (Best-Child-First)
-        promising_mask = bounds < (best - EPS)
-        promising_idx = np.flatnonzero(promising_mask)
+        # Poda na geração: descarta imediatamente os filhos com `bound >= best - EPS`.
+        promising_idx = np.flatnonzero(bounds < (best - EPS))
         nodes_pruned_gen += int(m - len(promising_idx))
         if len(promising_idx) == 0:
             return
 
+        # Ordena localmente os filhos sobreviventes do menor para o maior bound (Best-Child-First).
         order = promising_idx[np.argsort(bounds[promising_idx])]
         for pos, idx in enumerate(order):
             i = int(idx)
             c_bound = float(bounds[i])
             if c_bound >= best - EPS:
-                # `best` melhorou durante a exploração de um irmão anterior: poda o restante na visita
+                # Se um irmão anterior melhorou `best`, todos os demais em `order` também são >= best.
                 nodes_pruned_visit += int(len(order) - pos)
                 break
 
@@ -154,7 +157,7 @@ def solve(
             c_cost = float(new_costs[i])
             c_unvis = float(rem_unvis[i])
 
-            # Mutação in-place (sem cópia de lista!)
+            # Aplica transição in-place, desce na árvore e desfaz ao retornar (backtracking).
             path[level] = k
             visited[k] = True
             dfs(level + 1, c_cost, c_unvis, stack_depth + 1)
@@ -167,12 +170,13 @@ def solve(
     with prof.profile("bnb_tree_search"):
         root_unvis_sum = root_total_sum - float(pair_sums_cpu[0])
         if use_gpu and n >= 4:
-            # Pré-expansão em lote na GPU da fronteira de nível 2 (0 -> v1 -> v2)
+            # Gera a fronteira completa de nível 2 (0 -> v1 -> v2) e avalia em lote único na GPU.
             nodes_expanded += 1
             v1_list: List[int] = []
             v2_list: List[int] = []
             p_cost_list: List[float] = []
             unvis_sum_list: List[float] = []
+
             for v1 in range(1, n):
                 c1 = float(dist[0, v1])
                 u1 = root_unvis_sum - float(pair_sums_cpu[v1])
@@ -199,9 +203,11 @@ def solve(
                 unvisited_sums=np.asarray(unvis_sum_list, dtype=np.float64),
                 is_integer_metric=is_int,
             )
+
             promising_idx = np.flatnonzero(bounds < (best - EPS))
             nodes_pruned_gen += int(len(bounds) - len(promising_idx))
             order = promising_idx[np.argsort(bounds[promising_idx])]
+
             for pos, idx in enumerate(order):
                 i = int(idx)
                 if float(bounds[i]) >= best - EPS:

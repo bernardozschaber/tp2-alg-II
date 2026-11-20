@@ -1,17 +1,22 @@
-"""Branch-and-Bound v1 (1ª Otimização — Aceleração via GPU com `--use-gpu`).
+"""Branch-and-Bound v1: busca Best-First em lotes com cálculo de bounds na GPU (`--use-gpu`).
 
-Mantém a estratégia Best-First Search (fila de prioridades `heapq` com listas de caminho)
-da versão `v0_naive`, mas substitui o recálculo sequencial O(N²) do `bound` em Python
-pela avaliação paralelizada em lote na GPU (`GPUBackend.batch_evaluate_children_bounds`,
-via CuPy/CUDA quando `--use-gpu` está ativo nas máquinas do laboratório, ou NumPy
-vetorizado como fallback).
+Funcionamento operacional:
+  1. Pré-computa uma única vez no dispositivo (`GPUBackend.precompute_min_edges_device`)
+     as duas menores arestas incidentes de cada vértice (`min1_val`, `min1_idx`, `min2_val`)
+     e o vetor `pair_sums = min1_val + min2_val`.
+  2. Mantém a estratégia Best-First em fila de prioridades (`heapq`), porém retira até
+     `batch_size` nós promissores por iteração em vez de apenas 1 nó.
+  3. Caso algum nó de nível `n` feche uma rota melhorando `best` durante a montagem do lote,
+     os nós pais já coletados naquele lote são re-filtrados contra o novo `best` antes de
+     gerar filhos, evitando expansões obsoletas.
+  4. Empacota todas as transições `(u -> k)` dos pais do lote em vetores contíguos 1D e
+     despacha uma única chamada vetorizada a `backend.batch_evaluate_children_bounds`,
+     calculando todos os custos e bounds em paralelo (na VRAM via CuPy ou em NumPy CPU).
+  5. Filtra via máscara booleana (`bounds < best - EPS`) e reinserir os sobreviventes no heap.
 
-Objetivo na progressão gradual:
-  - Acelerar imediatamente a avaliação dos limites inferiores para viabilizar a
-    experimentação.
-  - Evidenciar que, mesmo acelerando o cálculo do `bound` em lote na GPU, a fila de
-    prioridades Best-First ainda acumula um número exponencial de estados em memória
-    (`max_queue_size`), motivando a 2ª otimização (`v2_dfs_memory`).
+Observação estrutural: embora reduza drasticamente o tempo de cálculo do `bound` frente ao
+`v0_naive`, a fila global `heapq` continua armazenando listas de caminho de toda a fronteira
+aberta (memória crescente com a largura da árvore).
 """
 
 from __future__ import annotations
@@ -41,7 +46,7 @@ def solve(
     batch_size: int = 128,
     profiler: Optional[ProfilerSession] = None,
 ) -> TourResult:
-    """Executa o Branch-and-Bound v1 (Best-First com avaliação de bounds em lote na GPU)."""
+    """Executa o Branch-and-Bound v1 com avaliação de lotes via GPU/NumPy vetorizado."""
     prof = profiler if profiler is not None else ProfilerSession(track_memory=False)
     n = instance.dimension
     dist = instance.dist_matrix
@@ -49,7 +54,7 @@ def solve(
     backend = get_backend(use_gpu=use_gpu)
     t_start = time.perf_counter()
 
-    # 1. Inicialização do limite superior (Warm-Start)
+    # 1. Inicialização do limite superior (`best`) via warm-start.
     best = float("inf")
     best_tour: List[int] = []
     initial_ub = float("inf")
@@ -65,11 +70,12 @@ def solve(
             best_tour = list(ws_res.tour)
             initial_ub = best
 
-    # 2. Pré-computação das menores arestas no dispositivo (GPU / Vetorizado)
+    # 2. Pré-computação no dispositivo ativo (GPU CuPy ou CPU NumPy).
     with prof.profile("bnb_gpu_precompute"):
         dist_dev, min1_val_dev, min1_idx_dev, min2_val_dev = backend.precompute_min_edges_device(
             dist
         )
+        # Mantém `pair_sums_cpu` na RAM para atualizar `unvis_sum` escalar ao enfileirar filhos.
         pair_sums_cpu = backend.to_cpu(min1_val_dev + min2_val_dev)
         root_total_sum = float(np.sum(pair_sums_cpu))
         root_bound = (
@@ -78,7 +84,7 @@ def solve(
             else root_total_sum / 2.0
         )
 
-    # 3. Busca Best-First com expansão e avaliação de bounds em lote na GPU
+    # 3. Contadores empíricos e inicialização da fila de prioridades.
     nodes_expanded = 0
     nodes_pruned_gen = 0
     nodes_pruned_visit = 0
@@ -89,7 +95,8 @@ def solve(
 
     t_bnb_start = time.perf_counter()
     with prof.profile("bnb_tree_search"):
-        # Estado na fila: (bound, tie_breaker, level, cost, unvis_sum, path_list)
+        # Estado armazenado no heap: (bound, tie_counter, level, cost, unvis_sum, path_list).
+        # `unvis_sum` guarda sum_{w not in path_list} (min1[w] + min2[w]).
         root_unvis_sum = root_total_sum - float(pair_sums_cpu[0])
         queue: List[Tuple[float, int, int, float, float, List[int]]] = [
             (root_bound, tie_counter, 1, 0.0, root_unvis_sum, [0])
@@ -103,9 +110,10 @@ def solve(
             if len(queue) > max_queue_size:
                 max_queue_size = len(queue)
 
-            # Retira um lote de até `batch_size` nós promissores da fila Best-First
+            # Fase A: retira até `batch_size` nós internos promissores do topo do heap.
             active_parents: List[Tuple[float, int, float, float, List[int]]] = []
             best_improved_in_batch = False
+
             while queue and len(active_parents) < batch_size:
                 node_bound, _, node_level, node_cost, node_unvis_sum, node_s = heapq.heappop(queue)
                 if node_level > max_depth:
@@ -123,7 +131,7 @@ def solve(
                     continue
 
                 if node_level == n:
-                    # Último passo: fechar o ciclo voltando para 0
+                    # Nó com todos os N vértices visitados: fecha imediatamente a aresta de retorno a 0.
                     nodes_expanded += 1
                     last_v = node_s[-1]
                     total_cost = node_cost + float(dist[last_v, 0])
@@ -136,10 +144,12 @@ def solve(
                     else:
                         nodes_pruned_gen += 1
                 else:
-                    active_parents.append((node_bound, node_level, node_cost, node_unvis_sum, node_s))
+                    active_parents.append(
+                        (node_bound, node_level, node_cost, node_unvis_sum, node_s)
+                    )
 
+            # Se alguma folha fechada neste lote baixou `best`, descarta pais já retirados que ficaram >= best.
             if best_improved_in_batch and active_parents:
-                # Re-filtra nós já retirados no mesmo lote cujo bound ficou >= novo `best`
                 still_promising: List[Tuple[float, int, float, float, List[int]]] = []
                 for p_item in active_parents:
                     if p_item[0] < best - EPS:
@@ -153,7 +163,7 @@ def solve(
 
             nodes_expanded += len(active_parents)
 
-            # Constrói os tensores planos de todas as transições filhas do lote para a GPU
+            # Fase B: empacota todas as transições (pai -> candidato k) em vetores 1D paralelos.
             parent_indices: List[int] = []
             first_v_list: List[int] = []
             last_v_list: List[int] = []
@@ -177,7 +187,7 @@ def solve(
             if not cand_k_list:
                 continue
 
-            # Avaliação em lote na GPU (ou NumPy vetorizado)
+            # Fase C: avaliação em paralelo de todo o lote no dispositivo ativo (GPU/NumPy).
             new_costs, bounds = backend.batch_evaluate_children_bounds(
                 dist_dev=dist_dev,
                 min1_val=min1_val_dev,
@@ -191,11 +201,10 @@ def solve(
                 is_integer_metric=is_int,
             )
 
-            # Filtra os filhos promissores (bounds < best - EPS)
+            # Fase D: poda vetorizada na geração e inserção dos filhos sobreviventes no heap.
             keep_mask = bounds < (best - EPS)
-            num_total = len(bounds)
             surviving_indices = np.flatnonzero(keep_mask)
-            nodes_pruned_gen += int(num_total - len(surviving_indices))
+            nodes_pruned_gen += int(len(bounds) - len(surviving_indices))
 
             for idx in surviving_indices:
                 i = int(idx)

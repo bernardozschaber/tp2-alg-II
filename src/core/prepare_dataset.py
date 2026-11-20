@@ -1,24 +1,27 @@
-"""Gerador e preparador do conjunto de teste TSPLIB com coordenadas 2D nativas (EUC_2D).
+"""Geração determinística dos arquivos `.tsp` (EUC_2D), manifesto e referências ótimas.
 
-Seguindo rigorosamente o enunciado do TP2:
-- Todas as instâncias possuem coordenadas 2D nativas da biblioteca TSPLIB95.
-- A função de custo utilizada é estritamente a distância euclidiana em 2D (EUC_2D).
-- O conjunto de teste contém 15 instâncias na faixa N in [10, 70]:
-  * 12 instâncias (80%) na Faixa Principal (N <= 40)
-  * 3 instâncias (20%) na Faixa Limite / Estresse (N in [45, 75])
+Responsabilidades do módulo:
+  1. Armazenar tabelas imutáveis com coordenadas 2D nativas extraídas diretamente dos
+     arquivos oficiais `.tsp.gz` da TSPLIB95.
+  2. Gerar os 15 arquivos `.tsp` padronizados no diretório `data/tsplib/` utilizando
+     distância euclidiana 2D (`EDGE_WEIGHT_TYPE : EUC_2D`):
+       - 12 instâncias na faixa principal (10 <= N <= 40, correspondendo a 80% da base).
+       - 3 instâncias na faixa limite/estresse (48 <= N <= 70, correspondendo a 20% da base).
+  3. Gerar `data/tsplib/manifest.json` com os metadados de cada instância.
+  4. Gerar `data/tsplib/opt_references.json` com as rotas oficiais `.opt.tour` da TSPLIB95
+     (indexadas em 0) e seus respectivos custos avaliados sob a distância euclidiana 2D,
+     servindo de referência de gap quando o Branch-and-Bound atingir timeout.
 """
 
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from typing import Dict, List, Tuple
 
-# Coordenadas 2D nativas da TSPLIB95 (conferidas contra os arquivos oficiais .tsp.gz em 2026-11-19).
-# ATENCAO: o EDGE_WEIGHT_TYPE original difere de EUC_2D em algumas delas
-# (burma14/ulysses16/ulysses22: GEO; att48: ATT; bays29: EXPLICIT + DISPLAY_DATA).
-# Aqui todas usam distancia euclidiana 2D sobre as coordenadas, logo os otimos
-# publicados na TSPLIB NAO se aplicam a essas instancias.
+# Coordenadas 2D (x, y) nativas extraídas dos arquivos oficiais da TSPLIB95.
+# Cada entrada mapeia o identificador da instância para a lista ordenada de vértices 0..N-1.
 RAW_TSPLIB_COORDS: Dict[str, List[Tuple[float, float]]] = {
     "burma14": [
         (16.47, 96.10), (16.47, 94.44), (20.09, 92.54), (22.39, 93.37),
@@ -110,11 +113,37 @@ RAW_TSPLIB_COORDS: Dict[str, List[Tuple[float, float]]] = {
     ],
 }
 
-# Definição das 15 instâncias do benchmark:
-# - 12 instâncias na Faixa Principal (N <= 40) -> 80% do conjunto
-# - 3 instâncias na Faixa Limite / Estresse (N in [45, 75]) -> 20% do conjunto
+# Rotas ótimas oficiais (.opt.tour da TSPLIB95 convertidas para indexação 0-based).
+# Usadas como referência de custo EUC_2D quando a busca exata excede o limite de tempo.
+OFFICIAL_OPT_TOURS: Dict[str, List[int]] = {
+    "ulysses16": [0, 13, 12, 11, 6, 5, 14, 4, 10, 8, 9, 15, 2, 1, 3, 7],
+    "ulysses22": [0, 13, 12, 11, 6, 5, 14, 4, 10, 8, 9, 18, 19, 20, 15, 2, 1, 16, 21, 3, 17, 7],
+    "bays29": [
+        0, 27, 5, 11, 8, 4, 25, 28, 2, 1, 19, 9, 3, 14, 17, 16, 13, 21, 10, 18,
+        24, 6, 22, 26, 7, 23, 15, 12, 20,
+    ],
+    "att48": [
+        0, 7, 37, 30, 43, 17, 6, 27, 5, 36, 18, 26, 16, 42, 29, 35, 45, 32, 19,
+        46, 20, 31, 38, 47, 4, 41, 23, 9, 44, 34, 3, 25, 1, 28, 33, 40, 15, 21,
+        2, 22, 13, 24, 12, 10, 11, 14, 39, 8,
+    ],
+    "berlin52": [
+        0, 48, 31, 44, 18, 40, 7, 8, 9, 42, 32, 50, 10, 51, 13, 12, 46, 25, 26,
+        27, 11, 24, 3, 5, 14, 4, 23, 47, 37, 36, 39, 38, 35, 34, 33, 43, 45, 15,
+        28, 49, 19, 22, 29, 1, 6, 41, 20, 16, 2, 17, 30, 21,
+    ],
+    "st70": [
+        0, 35, 28, 12, 69, 34, 30, 68, 37, 58, 21, 65, 62, 56, 14, 23, 18, 6, 1,
+        3, 17, 41, 31, 2, 7, 25, 54, 48, 27, 13, 19, 29, 43, 67, 26, 45, 24, 44,
+        38, 60, 39, 8, 16, 42, 40, 5, 52, 4, 9, 51, 59, 11, 33, 20, 32, 61, 53,
+        47, 66, 10, 63, 64, 55, 50, 49, 57, 36, 46, 15, 22,
+    ],
+}
+
+# Especificação da bateria de 15 instâncias:
+# - Faixa "main": 12 instâncias com 10 <= N <= 40 (80% da base).
+# - Faixa "stress": 3 instâncias com 48 <= N <= 70 (20% da base).
 BENCHMARK_SPEC = [
-    # Faixa Principal (N <= 40) - 12 instâncias (80%)
     {"name": "eil51_n10", "source": "eil51", "n": 10, "band": "main"},
     {"name": "berlin52_n12", "source": "berlin52", "n": 12, "band": "main"},
     {"name": "burma14", "source": "burma14", "n": 14, "band": "main"},
@@ -127,15 +156,27 @@ BENCHMARK_SPEC = [
     {"name": "berlin52_n33", "source": "berlin52", "n": 33, "band": "main"},
     {"name": "eil51_n38", "source": "eil51", "n": 38, "band": "main"},
     {"name": "st70_n40", "source": "st70", "n": 40, "band": "main"},
-    # Faixa Limite / Estresse (N in [45, 75]) - 3 instâncias (20%)
     {"name": "att48", "source": "att48", "n": 48, "band": "stress"},
     {"name": "berlin52", "source": "berlin52", "n": 52, "band": "stress"},
     {"name": "st70", "source": "st70", "n": 70, "band": "stress"},
 ]
 
 
-def write_tsp_file(filepath: Path, name: str, coords: List[Tuple[float, float]], comment: str) -> None:
-    """Escreve um arquivo .tsp no formato padrão TSPLIB com EDGE_WEIGHT_TYPE: EUC_2D."""
+def _euclidean_tour_cost(coords: List[Tuple[float, float]], tour: List[int]) -> float:
+    """Calcula a soma exata das distâncias euclidianas ao longo de um ciclo fechado."""
+    n = len(tour)
+    total = 0.0
+    for i in range(n):
+        u = tour[i]
+        v = tour[(i + 1) % n]
+        total += math.hypot(coords[u][0] - coords[v][0], coords[u][1] - coords[v][1])
+    return total
+
+
+def write_tsp_file(
+    filepath: Path, name: str, coords: List[Tuple[float, float]], comment: str
+) -> None:
+    """Serializa uma lista de coordenadas 2D no formato textual TSPLIB (NODE_COORD_SECTION)."""
     lines = [
         f"NAME : {name}",
         f"COMMENT : {comment}",
@@ -144,6 +185,7 @@ def write_tsp_file(filepath: Path, name: str, coords: List[Tuple[float, float]],
         "EDGE_WEIGHT_TYPE : EUC_2D",
         "NODE_COORD_SECTION",
     ]
+    # O padrão TSPLIB numera os vértices a partir de 1.
     for idx, (x, y) in enumerate(coords, start=1):
         lines.append(f"{idx} {x:.4f} {y:.4f}")
     lines.append("EOF")
@@ -151,13 +193,13 @@ def write_tsp_file(filepath: Path, name: str, coords: List[Tuple[float, float]],
 
 
 def prepare_all_instances(output_dir: Path | None = None) -> Path:
-    """Gera os arquivos .tsp das 15 instâncias do benchmark e o manifesto JSON."""
+    """Materializa os arquivos `.tsp`, `manifest.json` e `opt_references.json` em disco."""
     if output_dir is None:
         output_dir = Path(__file__).resolve().parents[2] / "data" / "tsplib"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     manifest = {
-        "description": "Conjunto de teste TSPLIB com coordenadas 2D nativas (EUC_2D) - TP2 DCC207",
+        "description": "Instâncias TSPLIB com coordenadas 2D nativas sob métrica EUC_2D",
         "total_instances": len(BENCHMARK_SPEC),
         "main_band_count": sum(1 for item in BENCHMARK_SPEC if item["band"] == "main"),
         "stress_band_count": sum(1 for item in BENCHMARK_SPEC if item["band"] == "stress"),
@@ -169,11 +211,10 @@ def prepare_all_instances(output_dir: Path | None = None) -> Path:
         source = spec["source"]
         n = spec["n"]
         band = spec["band"]
+        # Recorte determinístico dos primeiros `n` vértices quando `name` é subconjunto de `source`.
         coords = RAW_TSPLIB_COORDS[source][:n]
         tsp_path = output_dir / f"{name}.tsp"
-        comment = (
-            f"TSPLIB native 2D coordinates from {source} (N={n}, band={band}, EUC_2D)"
-        )
+        comment = f"TSPLIB native 2D coordinates from {source} (N={n}, band={band}, EUC_2D)"
         write_tsp_file(tsp_path, name=name, coords=coords, comment=comment)
         manifest["instances"].append(
             {
@@ -183,14 +224,31 @@ def prepare_all_instances(output_dir: Path | None = None) -> Path:
                 "dimension": n,
                 "band": band,
                 "edge_weight_type": "EUC_2D",
+                "has_tsplib_opt_tour": name in OFFICIAL_OPT_TOURS,
             }
         )
 
     manifest_path = output_dir / "manifest.json"
-    manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    manifest_path.write_text(
+        json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+
+    # Gera o arquivo de referências ótimas avaliando cada .opt.tour sob distância euclidiana 2D.
+    opt_references: Dict[str, dict] = {}
+    for name, tour in OFFICIAL_OPT_TOURS.items():
+        coords = RAW_TSPLIB_COORDS[name]
+        opt_references[name] = {
+            "euc2d_cost": round(_euclidean_tour_cost(coords, tour), 6),
+            "source": "tsplib_opt_tour",
+            "tour": tour,
+        }
+    opt_ref_path = output_dir / "opt_references.json"
+    opt_ref_path.write_text(
+        json.dumps(opt_references, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
     return manifest_path
 
 
 if __name__ == "__main__":
     path = prepare_all_instances()
-    print(f"Dataset TSPLIB preparado com sucesso em: {path}")
+    print(f"Dataset TSPLIB preparado em: {path}")

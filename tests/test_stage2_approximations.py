@@ -1,15 +1,18 @@
-"""Checkpoint 2: Christofides (v0, v1) e heurísticas de warm-start."""
+"""Testes unitários da Etapa 2: Christofides (`v0`, `v1`) e heurísticas de warm-start."""
 
 from __future__ import annotations
 
 import unittest
 
+import networkx as nx
 import numpy as np
 from scipy.spatial import ConvexHull
 
 from src.algorithms.christofides import solve_v0, solve_v1
+from src.algorithms.christofides.v1_optimized import min_weight_perfect_matching
 from src.algorithms.warm_start import (
     WARM_STARTS,
+    cheapest_insertion,
     graham_scan,
     run_warm_start,
 )
@@ -21,9 +24,27 @@ SMALL = ["eil51_n10", "berlin52_n12"]
 EPS = 1e-9
 
 
+def _cheapest_insertion_reference_n3(dist: np.ndarray, subtour: list[int]) -> list[int]:
+    """Implementação matricial de referência O(N³) para conferir a versão O(N² log N)."""
+    n = dist.shape[0]
+    tour = list(subtour)
+    in_tour = np.zeros(n, dtype=bool)
+    in_tour[tour] = True
+    while len(tour) < n:
+        free = np.flatnonzero(~in_tour)
+        a = np.asarray(tour)
+        b = np.roll(a, -1)
+        delta = dist[np.ix_(free, a)] + dist[np.ix_(free, b)] - dist[a, b][None, :]
+        r, e = np.unravel_index(int(np.argmin(delta)), delta.shape)
+        v = int(free[r])
+        tour.insert(int(e) + 1, v)
+        in_tour[v] = True
+    return tour
+
+
 class TestOracle(unittest.TestCase):
     def test_held_karp_matches_bruteforce_tiny(self) -> None:
-        """Sanidade do próprio oráculo contra força bruta em N=7."""
+        """Valida o oráculo Held-Karp contra força bruta exaustiva em N=7."""
         from itertools import permutations
 
         inst = load_tsplib_instance("eil51_n10")
@@ -47,7 +68,7 @@ class TestChristofides(unittest.TestCase):
             cls.opt[name], _ = held_karp(inst.dist_matrix)
 
     def test_valid_tours_and_structural_bounds_all_instances(self) -> None:
-        """Ciclo hamiltoniano válido e c(H) ≤ c(T) + c(M) (shortcutting não aumenta custo)."""
+        """Confirma ciclo hamiltoniano válido e c(H) <= c(T) + c(M) nas 15 instâncias."""
         for inst in self.suite:
             for solve in (solve_v0, solve_v1):
                 res = solve(inst)
@@ -60,17 +81,7 @@ class TestChristofides(unittest.TestCase):
                     )
 
     def test_v0_v1_same_mst_and_matching_cost(self) -> None:
-        """Refatoração não muda a matemática.
-
-        - Custo da AGM é único (mesmo com empates), logo v0 (Kruskal) == v1 (Prim).
-        - Com arestas empatadas, as AGMs podem diferir (ex.: eil51_n38 tem duas arestas
-          de peso sqrt(82)), mudando o conjunto ímpar I. Por isso o matching é comparado
-          sobre o MESMO conjunto I (o do v0).
-        """
-        import networkx as nx
-
-        from src.algorithms.christofides.v1_optimized import min_weight_perfect_matching
-
+        """Confirma que v0 e v1 obtêm o mesmo custo de AGM e o mesmo matching sobre igual conjunto I."""
         for inst in self.suite:
             r0, r1 = solve_v0(inst), solve_v1(inst)
             with self.subTest(inst=inst.name):
@@ -86,7 +97,7 @@ class TestChristofides(unittest.TestCase):
                 )
 
     def test_approximation_factor_against_exact_oracle(self) -> None:
-        """c(H) ≤ 1.5·OPT e c(T) ≤ OPT, com OPT dado pelo oráculo Held-Karp."""
+        """Confirma fator de aproximação c(H) <= 1.5 * OPT e c(T) <= OPT."""
         for name in SMALL:
             inst = load_tsplib_instance(name)
             opt = self.opt[name]
@@ -98,7 +109,7 @@ class TestChristofides(unittest.TestCase):
                     self.assertLessEqual(res.extra["mst_cost"], opt + EPS)
 
     def test_subroutine_profiling_present(self) -> None:
-        """Gargalos exigidos pelo enunciado (AGM e matching) aparecem no profiling."""
+        """Confirma registro de tempo e memória das 5 subrotinas do Christofides v1."""
         inst = load_tsplib_instance("berlin52")
         prof = ProfilerSession(track_memory=True)
         res = solve_v1(inst, prof)
@@ -107,6 +118,7 @@ class TestChristofides(unittest.TestCase):
             self.assertIn(key, subs)
             self.assertGreater(subs[key]["elapsed_ns"], 0)
         self.assertGreater(subs["min_weight_matching"]["peak_memory_bytes"], 0)
+        self.assertGreater(res.to_row()["process_max_rss_kb"], 0.0)
 
 
 class TestWarmStarts(unittest.TestCase):
@@ -121,11 +133,22 @@ class TestWarmStarts(unittest.TestCase):
         pts = np.array([[0, 0], [1, 0], [2, 0], [2, 2], [1, 1], [0, 2], [1, 2], [0, 0]], float)
         self.assertEqual(set(graham_scan(pts)), {0, 2, 3, 5})
 
+    def test_cheapest_insertion_heap_matches_reference_n3(self) -> None:
+        """Confirma que a versão O(N² log N) com heap preguiçoso coincide com a referência O(N³)."""
+        for name in ("eil51_n10", "berlin52_n12", "burma14", "bays29", "st70"):
+            inst = load_tsplib_instance(name)
+            hull = graham_scan(inst.coords)
+            t_fast = cheapest_insertion(inst.dist_matrix, hull)
+            t_ref = _cheapest_insertion_reference_n3(inst.dist_matrix, hull)
+            with self.subTest(inst=name):
+                self.assertTrue(inst.validate_tour(t_fast))
+                self.assertAlmostEqual(inst.tour_cost(t_fast), inst.tour_cost(t_ref), places=5)
+
     def test_all_warm_starts_valid(self) -> None:
         for inst in load_benchmark_suite():
             for name in WARM_STARTS:
                 res = run_warm_start(name, inst)
-                if res is None:  # twice_around ainda não implementado pelo grupo
+                if res is None:
                     self.assertEqual(name, "twice_around")
                     continue
                 with self.subTest(inst=inst.name, ws=name):

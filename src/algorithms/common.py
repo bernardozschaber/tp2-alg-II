@@ -1,4 +1,4 @@
-"""Estruturas comuns aos algoritmos (contrato de saída padronizado)."""
+"""Estruturas de retorno compartilhadas e utilitário de shortcutting hamiltoniano."""
 
 from __future__ import annotations
 
@@ -8,10 +8,12 @@ from typing import Any, Dict, List, Optional
 
 @dataclass
 class TourResult:
-    """Resultado padronizado de qualquer algoritmo/heurística do TSP.
+    """Contrato unificado de saída para todos os algoritmos exatos, aproximados e heurísticas.
 
-    `tour` é uma permutação de {0, ..., N-1} começando no vértice 0, SEM repetir
-    o vértice inicial no fim (o retorno ao início é implícito no custo).
+    Convenção de representação de rota:
+      - `tour` armazena uma permutação de `{0, ..., N-1}` iniciada no vértice `0`, sem
+        duplicar o vértice inicial ao final.
+      - O fechamento do ciclo `(tour[-1], tour[0])` é sempre incluído no campo `cost`.
     """
 
     algorithm: str
@@ -24,26 +26,32 @@ class TourResult:
     extra: Dict[str, Any] = field(default_factory=dict)
 
     def to_row(self) -> Dict[str, Any]:
-        """Linha achatada para CSV/DataFrame (sem a rota completa)."""
+        """Converte o resultado em dicionário plano pronto para exportação em CSV/DataFrame."""
         row: Dict[str, Any] = {
             "algorithm": self.algorithm,
             "instance": self.instance,
             "n": self.n,
             "cost": self.cost,
             "elapsed_s": self.elapsed_s,
+            "total_peak_memory_kb": self.profile.get("total_peak_memory_kb", 0.0),
+            "process_max_rss_kb": self.profile.get("process_max_rss_kb", 0.0),
         }
+        # Achata tempo (ms) e pico de memória (KiB) de cada subrotina instrumentada.
         for sub, metrics in self.profile.get("subroutines", {}).items():
             row[f"{sub}__ms"] = metrics["elapsed_ms"]
             row[f"{sub}__peak_kb"] = metrics["peak_memory_kb"]
+        # Incorpora metadados escalares específicos do algoritmo (ex.: contadores de poda).
         row.update({k: v for k, v in self.extra.items() if not isinstance(v, (list, dict))})
         return row
 
 
 def shortcut_walk(walk: List[int], start: Optional[int] = 0) -> List[int]:
-    """Elimina vértices repetidos de um passeio (u-w-v vira u-v), mantendo a 1ª ocorrência.
+    """Remove visitas repetidas de um passeio fechado preservando apenas a primeira ocorrência.
 
-    Válido pela desigualdade triangular (Aula 13): nunca aumenta o custo.
-    Complexidade Θ(len(walk)).
+    Ao suprimir vértices já visitados, substitui subcaminhos `u -> w -> v` pela ligação
+    direta `u -> v`. Em espaços métricos (desigualdade triangular), essa operação nunca
+    aumenta o comprimento total do circuito.
+    Complexidade: Θ(|walk|) em tempo e Θ(N) em espaço via tabela hash (`set`).
     """
     seen = set()
     tour: List[int] = []
@@ -51,7 +59,9 @@ def shortcut_walk(walk: List[int], start: Optional[int] = 0) -> List[int]:
         if v not in seen:
             seen.add(v)
             tour.append(v)
+
+    # Rotaciona circularmente a sequência para iniciar no vértice `start`, quando solicitado.
     if start is not None and tour and tour[0] != start:
-        i = tour.index(start)
-        tour = tour[i:] + tour[:i]
+        idx = tour.index(start)
+        tour = tour[idx:] + tour[:idx]
     return tour

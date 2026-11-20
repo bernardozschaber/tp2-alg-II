@@ -1,9 +1,17 @@
-"""Abstração e utilitários de aceleração via GPU (--use-gpu) para o TP2 (DCC207).
+"""Abstração de execução vetorizada em CPU (NumPy) ou GPU CUDA (CuPy) via `--use-gpu`.
 
-Quando `use_gpu=True`, tenta utilizar `cupy` (CUDA) para executar operações
-matriciais e avaliações de limites inferiores (bounds) em lote na GPU.
-Caso a máquina local não possua GPU CUDA ou `cupy` instalado, realiza fallback
-transparente para operações vetorizadas em `numpy`, mantendo a mesma interface.
+Operação empírica do módulo:
+  - Na importação, tenta carregar `cupy` e consultar `cp.cuda.is_available()`.
+  - Quando `use_gpu=True` e há dispositivo CUDA operacional, `GPUBackend.xp` aponta para
+    `cupy` e todos os tensores intermediários são alocados e operados em VRAM.
+  - Quando `use_gpu=False` ou não há GPU/CuPy no ambiente atual, `GPUBackend.xp` aponta
+    para `numpy`, executando exatamente as mesmas operações vetorizadas em CPU.
+  - Oferece três primitivas numéricas compartilhadas pelos algoritmos:
+      1. `compute_euc2d_matrix`: matriz completa de distâncias euclidianas `(N, N)`.
+      2. `precompute_min_edges_device`: extração vetorizada das duas menores arestas
+         incidentes a cada vértice (`min1_val`, `min1_idx`, `min2_val`).
+      3. `batch_evaluate_children_bounds`: cálculo paralelo de novos custos acumulados e
+         limites inferiores (bounds) para um lote de `M` transições candidatas de uma vez.
 """
 
 from __future__ import annotations
@@ -24,7 +32,7 @@ except Exception:
 
 @dataclass
 class GPUBackend:
-    """Gerenciador de backend numérico (CPU NumPy vs GPU CuPy) controlado por --use-gpu."""
+    """Encapsula a seleção de dispositivo (NumPy/CPU vs CuPy/GPU) e transferências de memória."""
 
     use_gpu_requested: bool = False
     device_active: bool = False
@@ -53,45 +61,56 @@ class GPUBackend:
             self.xp = np
 
     def to_device(self, array: np.ndarray) -> Any:
-        """Transfere um array NumPy para a GPU se ativa, ou retorna o próprio array."""
+        """Move um array da RAM (host) para a VRAM da GPU, ou retorna visão NumPy na CPU."""
         if self.device_active and cp is not None:
             return cp.asarray(array)
         return np.asarray(array)
 
     def to_cpu(self, array: Any) -> np.ndarray:
-        """Garante que o array retorne para a memória da CPU como `np.ndarray`."""
+        """Garante que o resultado esteja na memória principal (host) como `np.ndarray`."""
         if self.device_active and cp is not None and isinstance(array, cp.ndarray):
             return cp.asnumpy(array)
         return np.asarray(array)
 
     def sync(self) -> None:
-        """Sincroniza o stream da GPU para medições precisas de profiling."""
+        """Bloqueia até a conclusão dos kernels CUDA pendentes para cronometragem fiel."""
         if self.device_active and cp is not None:
             cp.cuda.Stream.null.synchronize()
 
     def compute_euc2d_matrix(
         self, coords: np.ndarray, round_to_int: bool = False
     ) -> np.ndarray:
-        """Calcula a matriz de distâncias euclidianas 2D (N x N) usando o backend ativo."""
+        """Computa a matriz simétrica `(N, N)` de distâncias euclidianas por broadcasting 3D.
+
+        Expande `coords` de `(N, 2)` para `(N, 1, 2)` e `(1, N, 2)`, calcula a diferença
+        par a par `diff` de shape `(N, N, 2)` e aplica norma L2 no último eixo.
+        Complexidade: Θ(N²) em tempo e espaço.
+        """
         pts = self.to_device(np.asarray(coords, dtype=np.float64))
         diff = pts[:, None, :] - pts[None, :, :]
         dist = self.xp.sqrt(self.xp.sum(diff * diff, axis=-1))
         if round_to_int:
+            # Padrão de arredondamento inteiro: nint(d) = floor(d + 0.5).
             dist = self.xp.floor(dist + 0.5)
         self.sync()
         return self.to_cpu(dist)
 
     def precompute_min_edges_device(self, dist_matrix: np.ndarray) -> Tuple[Any, Any, Any, Any]:
-        """Pré-computa na GPU/vetorizado as duas menores arestas incidentes a cada vértice.
+        """Pré-computa no dispositivo ativo as duas menores arestas incidentes de cada vértice.
 
-        Retorna (dist_dev, min1_val, min1_idx, min2_val) no dispositivo ativo.
+        Substitui a diagonal principal por +inf para impedir auto-arestas `(v, v)`, ordena
+        os índices de cada linha via `argsort` e extrai as colunas 0 e 1:
+          - `dist_dev` : matriz `(N, N)` no dispositivo com diagonal +inf.
+          - `min1_val` : vetor `(N,)` com o menor peso incidente em cada vértice `v`.
+          - `min1_idx` : vetor `(N,)` com o vizinho que realiza `min1_val[v]`.
+          - `min2_val` : vetor `(N,)` com o segundo menor peso incidente em `v`.
+        Complexidade: O(N² log N) no pré-processamento único da instância.
         """
         n = dist_matrix.shape[0]
         mat = np.array(dist_matrix, dtype=np.float64, copy=True)
         np.fill_diagonal(mat, np.inf)
         mat_dev = self.to_device(mat)
 
-        # Ordena cada linha para obter as 2 menores arestas incidentes em cada vértice
         order = self.xp.argsort(mat_dev, axis=1)
         rows = self.xp.arange(n)
         min1_idx = order[:, 0]
@@ -114,13 +133,32 @@ class GPUBackend:
         unvisited_sums: np.ndarray,
         is_integer_metric: bool = False,
     ) -> Tuple[np.ndarray, np.ndarray]:
-        """Avalia em lote na GPU (ou NumPy vetorizado) os custos e bounds de M filhos candidatos.
+        """Avalia em lote vetorizado os custos e limites inferiores de `M` transições candidatas.
 
-        Para cada transição candidata i (estendendo caminho v_0 -> v_1 -> ... -> u com novo vértice k):
-        - novo custo: parent_costs[i] + dist[u, k]
-        - soma das 2 arestas por vértice segundo Aula 12 (pp. 13-14):
-          S = 2 * new_cost + min_other(v_0, v_1) + min_other(k, u) + sum_{w not in path U {k}} (min1[w] + min2[w])
-        - bound = ceil(S / 2) (para métrica inteira) ou S / 2.0 (para métrica contínua float).
+        Cada índice `i in 0..M-1` dos vetores de entrada representa estender um caminho
+        parcial `0 -> v1 -> ... -> u` anexando o vértice não visitado `k`:
+          - `first_vertices[i]`: `v1` (ou `-1` se o caminho pai continha apenas a raiz `[0]`).
+          - `last_vertices[i]` : extremidade atual `u`.
+          - `candidates[i]`    : próximo vértice candidato `k`.
+          - `parent_costs[i]`  : soma das arestas já percorridas no caminho pai.
+          - `unvisited_sums[i]`: soma de `(min1[w] + min2[w])` sobre todos os vértices `w`
+                                 ainda não visitados no estado pai (incluindo `k`).
+
+        Cálculo executado em paralelo para todo o lote:
+          1. `new_costs = parent_costs + dist[u, k]`.
+          2. Cada aresta já fixada no caminho contribui duas vezes na soma de graus 2
+             (`2 * new_costs`), cobrindo integralmente todos os vértices internos e uma
+             aresta de cada extremidade (`0` e `k`).
+          3. A segunda aresta livre da raiz `0` é `min2[0]` se a primeira aresta `(0, v1)` já
+             usar seu vizinho mais próximo `min1_idx[0]`, ou `min1[0]` caso contrário.
+          4. Analogamente, a segunda aresta livre da nova extremidade `k` é `min2[k]` se
+             `min1_idx[k] == u`, ou `min1[k]` caso contrário.
+          5. Retira-se `min1[k] + min2[k]` de `unvisited_sums`, restando exatamente a soma
+             das duas menores arestas dos vértices ainda fora do caminho.
+          6. Divide-se a soma dobrada por 2 (aplicando `ceil(x - 1e-9)` em métricas inteiras
+             para evitar saltos artificiais por erro de ponto flutuante).
+
+        Complexidade: Θ(M) operações vetoriais (paralelizadas na GPU quando ativa).
         """
         xp = self.xp
         v1_arr = self.to_device(np.asarray(first_vertices, dtype=np.int64))
@@ -129,21 +167,22 @@ class GPUBackend:
         p_cost = self.to_device(np.asarray(parent_costs, dtype=np.float64))
         unvis_sum = self.to_device(np.asarray(unvisited_sums, dtype=np.float64))
 
+        # 1. Custo acumulado após adicionar a aresta (u, k).
         step_cost = dist_dev[u_arr, k_arr]
         new_costs = p_cost + step_cost
 
-        # Contribuição residual da raiz (vértice 0), cuja primeira aresta fixada é (0, v1)
-        # Se o caminho tinha apenas [0], então v1 é o próprio candidato k
+        # 2. Menor aresta restante na raiz 0 (se o pai era [0], o primeiro salto v1 é o próprio k).
         eff_v1 = xp.where(v1_arr >= 0, v1_arr, k_arr)
         root_min_other = xp.where(min1_idx[0] == eff_v1, min2_val[0], min1_val[0])
 
-        # Contribuição residual da nova extremidade k, cuja aresta fixada é (u, k)
+        # 3. Menor aresta restante na nova extremidade k distinta da aresta de chegada (u, k).
         k_min_other = xp.where(min1_idx[k_arr] == u_arr, min2_val[k_arr], min1_val[k_arr])
 
-        # Soma de (min1 + min2) dos vértices ainda não visitados após incluir k
+        # 4. Remove a contribuição de vértice livre do candidato k, que acaba de entrar no caminho.
         k_pair_sum = min1_val[k_arr] + min2_val[k_arr]
         rem_unvisited_sum = unvis_sum - k_pair_sum
 
+        # 5. Limite inferior final: metade da soma dobrada de graus 2 sobre todos os N vértices.
         total_double_sum = 2.0 * new_costs + root_min_other + k_min_other + rem_unvisited_sum
         if is_integer_metric:
             bounds = xp.ceil(total_double_sum / 2.0 - 1e-9)
@@ -155,5 +194,5 @@ class GPUBackend:
 
 
 def get_backend(use_gpu: bool = False) -> GPUBackend:
-    """Fábrica de backend para a flag --use-gpu."""
+    """Instancia um `GPUBackend` configurado para CPU ou GPU conforme `use_gpu`."""
     return GPUBackend(use_gpu_requested=use_gpu)
