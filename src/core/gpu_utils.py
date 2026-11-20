@@ -146,7 +146,7 @@ class GPUBackend:
 
         total_double_sum = 2.0 * new_costs + root_min_other + k_min_other + rem_unvisited_sum
         if is_integer_metric:
-            bounds = xp.ceil(total_double_sum / 2.0)
+            bounds = xp.ceil(total_double_sum / 2.0 - 1e-9)
         else:
             bounds = total_double_sum / 2.0
 

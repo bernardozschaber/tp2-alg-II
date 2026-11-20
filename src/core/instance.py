@@ -89,7 +89,7 @@ def load_tsplib_instance(
     round_to_int: bool = False,
     use_gpu: bool = False,
     profiler: Optional[ProfilerSession] = None,
-    band: str = "main",
+    band: Optional[str] = None,
 ) -> TSPInstance:
     """Carrega uma instância TSPLIB (.tsp) e constrói sua matriz de distâncias EUC_2D."""
     default_dir = Path(__file__).resolve().parents[2] / "data" / "tsplib"
@@ -108,6 +108,14 @@ def load_tsplib_instance(
     dim = int(headers.get("DIMENSION", len(coords)))
     if len(coords) != dim:
         dim = len(coords)
+
+    if band is None:
+        if "band=stress" in comment:
+            band = "stress"
+        elif "band=main" in comment:
+            band = "main"
+        else:
+            band = "stress" if dim >= 45 else "main"
 
     backend: GPUBackend = get_backend(use_gpu=use_gpu)
     if profiler is not None:

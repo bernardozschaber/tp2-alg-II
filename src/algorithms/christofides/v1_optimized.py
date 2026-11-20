@@ -37,9 +37,9 @@ def prim_dense(dist: np.ndarray, root: int = 0) -> Tuple[List[Tuple[int, int]], 
     edges: List[Tuple[int, int]] = []
     degree = np.zeros(n, dtype=np.int64)
     for _ in range(n):
-        masked = np.where(in_tree, np.inf, key)
-        u = int(np.argmin(masked))
+        u = int(np.argmin(key))
         in_tree[u] = True
+        key[u] = np.inf
         if parent[u] >= 0:
             p = int(parent[u])
             edges.append((p, u))
