@@ -126,6 +126,7 @@ def solve(
     max_depth = 1
     max_queue_size = 1
     timed_out = False
+    oom_aborted = False
     # Contador monotônico de desempate no heap para evitar comparação direta entre listas Python.
     tie_counter = 0
 
@@ -136,72 +137,80 @@ def solve(
         # `level` contabiliza quantos vértices estão atualmente em `path_list` (raiz = 1).
         queue = [(root_bound, tie_counter, 1, 0.0, [0])]
 
-        while queue:
-            # Checa o timeout a cada 64 expansões para reduzir chamadas ao relógio do SO.
-            if (nodes_expanded & 63) == 0 and (time.perf_counter() - t_start) >= timeout_s:
-                timed_out = True
-                break
+        try:
+            while queue:
+                # Checa o timeout a cada 64 expansões para reduzir chamadas ao relógio do SO.
+                if (nodes_expanded & 63) == 0 and (time.perf_counter() - t_start) >= timeout_s:
+                    timed_out = True
+                    break
 
-            if len(queue) > max_queue_size:
-                max_queue_size = len(queue)
+                if len(queue) > max_queue_size:
+                    max_queue_size = len(queue)
 
-            node_bound, _, node_level, node_cost, node_s = heapq.heappop(queue)
+                node_bound, _, node_level, node_cost, node_s = heapq.heappop(queue)
 
-            if node_level > max_depth:
-                max_depth = node_level
+                if node_level > max_depth:
+                    max_depth = node_level
 
-            # Caso base: `level == n + 1` indica ciclo fechado `[0, ..., v_{n-1}, 0]`.
-            if node_level > n:
-                if node_cost + EPS < best:
-                    best = node_cost
-                    best_tour = node_s[:-1]
-                continue
+                # Caso base: `level == n + 1` indica ciclo fechado `[0, ..., v_{n-1}, 0]`.
+                if node_level > n:
+                    if node_cost + EPS < best:
+                        best = node_cost
+                        best_tour = node_s[:-1]
+                    continue
 
-            # Poda na visita: `best` diminuiu desde que este nó foi enfileirado.
-            if node_bound >= best - EPS:
-                nodes_pruned_visit += 1
-                continue
+                # Poda na visita: `best` diminuiu desde que este nó foi enfileirado.
+                if node_bound >= best - EPS:
+                    nodes_pruned_visit += 1
+                    continue
 
-            nodes_expanded += 1
-            last_v = node_s[-1]
+                nodes_expanded += 1
+                last_v = node_s[-1]
 
-            if node_level < n:
-                # Expande todos os vértices ainda não presentes em `node_s`.
-                for k in range(1, n):
-                    if k not in node_s:
-                        edge_cost = float(dist[last_v, k])
-                        if math.isinf(edge_cost):
-                            continue
-                        # Aloca uma nova lista copiando todo o prefixo atual + candidato `k`.
-                        new_s = node_s + [k]
-                        child_bound = compute_bound_naive(dist, new_s, n, is_int)
-                        if child_bound < best - EPS:
+                if node_level < n:
+                    # Expande todos os vértices ainda não presentes em `node_s`.
+                    for k in range(1, n):
+                        if k not in node_s:
+                            edge_cost = float(dist[last_v, k])
+                            if math.isinf(edge_cost):
+                                continue
+                            # Aloca uma nova lista copiando todo o prefixo atual + candidato `k`.
+                            new_s = node_s + [k]
+                            child_bound = compute_bound_naive(dist, new_s, n, is_int)
+                            if child_bound < best - EPS:
+                                tie_counter += 1
+                                heapq.heappush(
+                                    queue,
+                                    (child_bound, tie_counter, node_level + 1, node_cost + edge_cost, new_s),
+                                )
+                            else:
+                                nodes_pruned_gen += 1
+                else:
+                    # Todos os N vértices foram visitados: avalia a aresta de fechamento `(last_v, 0)`.
+                    edge_cost = float(dist[last_v, 0])
+                    if not math.isinf(edge_cost):
+                        total_cost = node_cost + edge_cost
+                        if total_cost < best - EPS:
                             tie_counter += 1
                             heapq.heappush(
                                 queue,
-                                (child_bound, tie_counter, node_level + 1, node_cost + edge_cost, new_s),
+                                (total_cost, tie_counter, node_level + 1, total_cost, node_s + [0]),
                             )
                         else:
                             nodes_pruned_gen += 1
-            else:
-                # Todos os N vértices foram visitados: avalia a aresta de fechamento `(last_v, 0)`.
-                edge_cost = float(dist[last_v, 0])
-                if not math.isinf(edge_cost):
-                    total_cost = node_cost + edge_cost
-                    if total_cost < best - EPS:
-                        tie_counter += 1
-                        heapq.heappush(
-                            queue,
-                            (total_cost, tie_counter, node_level + 1, total_cost, node_s + [0]),
-                        )
-                    else:
-                        nodes_pruned_gen += 1
 
+                if len(queue) > max_queue_size:
+                    max_queue_size = len(queue)
+        except MemoryError:
+            # Libera imediatamente a fila para permitir serializar as métricas coletadas até o OOM.
             if len(queue) > max_queue_size:
                 max_queue_size = len(queue)
+            queue.clear()
+            oom_aborted = True
 
     bnb_search_time_s = time.perf_counter() - t_bnb_start
     total_elapsed_s = time.perf_counter() - t_start
+    status = "OOM" if oom_aborted else ("NA" if timed_out else "OPTIMAL")
 
     return TourResult(
         algorithm=ALGORITHM_NAME,
@@ -224,7 +233,8 @@ def solve(
             "max_depth_reached": max_depth,
             "max_queue_size": max_queue_size,
             "timed_out": timed_out,
-            "status": "NA" if timed_out else "OPTIMAL",
+            "oom_aborted": oom_aborted,
+            "status": status,
             "use_gpu": False,
             "gpu_backend": "cpu_sequential",
         },

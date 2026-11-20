@@ -91,6 +91,7 @@ def solve(
     max_depth = 1
     max_queue_size = 1
     timed_out = False
+    oom_aborted = False
     tie_counter = 0
 
     t_bnb_start = time.perf_counter()
@@ -102,129 +103,137 @@ def solve(
             (root_bound, tie_counter, 1, 0.0, root_unvis_sum, [0])
         ]
 
-        while queue:
-            if (time.perf_counter() - t_start) >= timeout_s:
-                timed_out = True
-                break
+        try:
+            while queue:
+                if (time.perf_counter() - t_start) >= timeout_s:
+                    timed_out = True
+                    break
 
-            if len(queue) > max_queue_size:
-                max_queue_size = len(queue)
+                if len(queue) > max_queue_size:
+                    max_queue_size = len(queue)
 
-            # Fase A: retira até `batch_size` nós internos promissores do topo do heap.
-            active_parents: List[Tuple[float, int, float, float, List[int]]] = []
-            best_improved_in_batch = False
+                # Fase A: retira até `batch_size` nós internos promissores do topo do heap.
+                active_parents: List[Tuple[float, int, float, float, List[int]]] = []
+                best_improved_in_batch = False
 
-            while queue and len(active_parents) < batch_size:
-                node_bound, _, node_level, node_cost, node_unvis_sum, node_s = heapq.heappop(queue)
-                if node_level > max_depth:
-                    max_depth = node_level
+                while queue and len(active_parents) < batch_size:
+                    node_bound, _, node_level, node_cost, node_unvis_sum, node_s = heapq.heappop(queue)
+                    if node_level > max_depth:
+                        max_depth = node_level
 
-                if node_level > n:
-                    if node_cost + EPS < best:
-                        best = node_cost
-                        best_tour = node_s[:-1]
-                        best_improved_in_batch = True
-                    continue
+                    if node_level > n:
+                        if node_cost + EPS < best:
+                            best = node_cost
+                            best_tour = node_s[:-1]
+                            best_improved_in_batch = True
+                        continue
 
-                if node_bound >= best - EPS:
-                    nodes_pruned_visit += 1
-                    continue
-
-                if node_level == n:
-                    # Nó com todos os N vértices visitados: fecha imediatamente a aresta de retorno a 0.
-                    nodes_expanded += 1
-                    last_v = node_s[-1]
-                    total_cost = node_cost + float(dist[last_v, 0])
-                    if total_cost < best - EPS:
-                        best = total_cost
-                        best_tour = list(node_s)
-                        best_improved_in_batch = True
-                        if n + 1 > max_depth:
-                            max_depth = n + 1
-                    else:
-                        nodes_pruned_gen += 1
-                else:
-                    active_parents.append(
-                        (node_bound, node_level, node_cost, node_unvis_sum, node_s)
-                    )
-
-            # Se alguma folha fechada neste lote baixou `best`, descarta pais já retirados que ficaram >= best.
-            if best_improved_in_batch and active_parents:
-                still_promising: List[Tuple[float, int, float, float, List[int]]] = []
-                for p_item in active_parents:
-                    if p_item[0] < best - EPS:
-                        still_promising.append(p_item)
-                    else:
+                    if node_bound >= best - EPS:
                         nodes_pruned_visit += 1
-                active_parents = still_promising
+                        continue
 
-            if not active_parents:
-                continue
+                    if node_level == n:
+                        # Nó com todos os N vértices visitados: fecha imediatamente a aresta de retorno a 0.
+                        nodes_expanded += 1
+                        last_v = node_s[-1]
+                        total_cost = node_cost + float(dist[last_v, 0])
+                        if total_cost < best - EPS:
+                            best = total_cost
+                            best_tour = list(node_s)
+                            best_improved_in_batch = True
+                            if n + 1 > max_depth:
+                                max_depth = n + 1
+                        else:
+                            nodes_pruned_gen += 1
+                    else:
+                        active_parents.append(
+                            (node_bound, node_level, node_cost, node_unvis_sum, node_s)
+                        )
 
-            nodes_expanded += len(active_parents)
+                # Se alguma folha fechada neste lote baixou `best`, descarta pais já retirados que ficaram >= best.
+                if best_improved_in_batch and active_parents:
+                    still_promising: List[Tuple[float, int, float, float, List[int]]] = []
+                    for p_item in active_parents:
+                        if p_item[0] < best - EPS:
+                            still_promising.append(p_item)
+                        else:
+                            nodes_pruned_visit += 1
+                    active_parents = still_promising
 
-            # Fase B: empacota todas as transições (pai -> candidato k) em vetores 1D paralelos.
-            parent_indices: List[int] = []
-            first_v_list: List[int] = []
-            last_v_list: List[int] = []
-            cand_k_list: List[int] = []
-            p_cost_list: List[float] = []
-            unvis_sum_list: List[float] = []
+                if not active_parents:
+                    continue
 
-            for p_idx, (_, p_level, p_cost, p_unvis, p_s) in enumerate(active_parents):
-                visited_set = set(p_s)
-                v1 = p_s[1] if p_level >= 2 else -1
-                u = p_s[-1]
-                for k in range(1, n):
-                    if k not in visited_set:
-                        parent_indices.append(p_idx)
-                        first_v_list.append(v1)
-                        last_v_list.append(u)
-                        cand_k_list.append(k)
-                        p_cost_list.append(p_cost)
-                        unvis_sum_list.append(p_unvis)
+                nodes_expanded += len(active_parents)
 
-            if not cand_k_list:
-                continue
+                # Fase B: empacota todas as transições (pai -> candidato k) em vetores 1D paralelos.
+                parent_indices: List[int] = []
+                first_v_list: List[int] = []
+                last_v_list: List[int] = []
+                cand_k_list: List[int] = []
+                p_cost_list: List[float] = []
+                unvis_sum_list: List[float] = []
 
-            # Fase C: avaliação em paralelo de todo o lote no dispositivo ativo (GPU/NumPy).
-            new_costs, bounds = backend.batch_evaluate_children_bounds(
-                dist_dev=dist_dev,
-                min1_val=min1_val_dev,
-                min1_idx=min1_idx_dev,
-                min2_val=min2_val_dev,
-                first_vertices=np.asarray(first_v_list, dtype=np.int64),
-                last_vertices=np.asarray(last_v_list, dtype=np.int64),
-                candidates=np.asarray(cand_k_list, dtype=np.int64),
-                parent_costs=np.asarray(p_cost_list, dtype=np.float64),
-                unvisited_sums=np.asarray(unvis_sum_list, dtype=np.float64),
-                is_integer_metric=is_int,
-            )
+                for p_idx, (_, p_level, p_cost, p_unvis, p_s) in enumerate(active_parents):
+                    visited_set = set(p_s)
+                    v1 = p_s[1] if p_level >= 2 else -1
+                    u = p_s[-1]
+                    for k in range(1, n):
+                        if k not in visited_set:
+                            parent_indices.append(p_idx)
+                            first_v_list.append(v1)
+                            last_v_list.append(u)
+                            cand_k_list.append(k)
+                            p_cost_list.append(p_cost)
+                            unvis_sum_list.append(p_unvis)
 
-            # Fase D: poda vetorizada na geração e inserção dos filhos sobreviventes no heap.
-            keep_mask = bounds < (best - EPS)
-            surviving_indices = np.flatnonzero(keep_mask)
-            nodes_pruned_gen += int(len(bounds) - len(surviving_indices))
+                if not cand_k_list:
+                    continue
 
-            for idx in surviving_indices:
-                i = int(idx)
-                p_idx = parent_indices[i]
-                _, p_level, _, p_unvis, p_s = active_parents[p_idx]
-                k = cand_k_list[i]
-                c_bound = float(bounds[i])
-                c_cost = float(new_costs[i])
-                c_unvis = p_unvis - float(pair_sums_cpu[k])
-                tie_counter += 1
-                heapq.heappush(
-                    queue,
-                    (c_bound, tie_counter, p_level + 1, c_cost, c_unvis, p_s + [k]),
+                # Fase C: avaliação em paralelo de todo o lote no dispositivo ativo (GPU/NumPy).
+                new_costs, bounds = backend.batch_evaluate_children_bounds(
+                    dist_dev=dist_dev,
+                    min1_val=min1_val_dev,
+                    min1_idx=min1_idx_dev,
+                    min2_val=min2_val_dev,
+                    first_vertices=np.asarray(first_v_list, dtype=np.int64),
+                    last_vertices=np.asarray(last_v_list, dtype=np.int64),
+                    candidates=np.asarray(cand_k_list, dtype=np.int64),
+                    parent_costs=np.asarray(p_cost_list, dtype=np.float64),
+                    unvisited_sums=np.asarray(unvis_sum_list, dtype=np.float64),
+                    is_integer_metric=is_int,
                 )
 
+                # Fase D: poda vetorizada na geração e inserção dos filhos sobreviventes no heap.
+                keep_mask = bounds < (best - EPS)
+                surviving_indices = np.flatnonzero(keep_mask)
+                nodes_pruned_gen += int(len(bounds) - len(surviving_indices))
+
+                for idx in surviving_indices:
+                    i = int(idx)
+                    p_idx = parent_indices[i]
+                    _, p_level, _, p_unvis, p_s = active_parents[p_idx]
+                    k = cand_k_list[i]
+                    c_bound = float(bounds[i])
+                    c_cost = float(new_costs[i])
+                    c_unvis = p_unvis - float(pair_sums_cpu[k])
+                    tie_counter += 1
+                    heapq.heappush(
+                        queue,
+                        (c_bound, tie_counter, p_level + 1, c_cost, c_unvis, p_s + [k]),
+                    )
+
+                if len(queue) > max_queue_size:
+                    max_queue_size = len(queue)
+        except MemoryError:
+            # Libera a fila imediatamente para concluir o registro das métricas parciais até o OOM.
             if len(queue) > max_queue_size:
                 max_queue_size = len(queue)
+            queue.clear()
+            oom_aborted = True
 
     bnb_search_time_s = time.perf_counter() - t_bnb_start
     total_elapsed_s = time.perf_counter() - t_start
+    status = "OOM" if oom_aborted else ("NA" if timed_out else "OPTIMAL")
 
     return TourResult(
         algorithm=ALGORITHM_NAME,
@@ -247,7 +256,8 @@ def solve(
             "max_depth_reached": max_depth,
             "max_queue_size": max_queue_size,
             "timed_out": timed_out,
-            "status": "NA" if timed_out else "OPTIMAL",
+            "oom_aborted": oom_aborted,
+            "status": status,
             "use_gpu": use_gpu,
             "gpu_backend": backend.backend_name,
         },

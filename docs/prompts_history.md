@@ -25,3 +25,9 @@
 12. "Mantenha os testes unitários dos algoritmos aproximados juntos na mesma suíte, adicionando a validação do Twice-around-the-tree (rotas válidas, fator de aproximação <= 2 contra o oráculo exato, consistência da Árvore Geradora Mínima, profiling por subrotina e segurança iterativa), inclua o Twice-around-the-tree nos testes de warm-start do Branch-and-Bound."
 
 13. "Faça uma revisão e auditoria profunda da implementação do Twice-around-the-tree e de sua integração ao restante do projeto, verificando casos de borda, complexidade e profiling, e refine a descrição do funcionamento do código adicionando comentários pragmáticos e claros que reflitam as decisões adotadas."
+
+14. "Após a integração completa do Twice-around-the-tree pelo restante do grupo, audite toda a base unificada, certifique o gabarito exato EUC_2D para as 15 instâncias e estruture a Etapa 4: extração das features geométricas e topológicas, orquestrador CLI com isolamento por subprocesso, paralelismo, checkpoint/resume e suporte a GPU para as 4 baterias experimentais (aproximativos, ablação v0-v3, warm-starts de 30 min e validação GPU), modelagem de complexidade empírica (R² e RMSE), análise de sensibilidade (Regressão Múltipla/Ridge e Árvore de Decisão), validando tudo com testes unitários."
+
+15. "Explique a parte pragmática de uso do sistema: explicite o pipeline de execução de cada comando proposto."
+
+16. "Configure os experimentos da Etapa 4 de forma que a bateria de 30 minutos rode com o máximo de instâncias possível, ou todas as 15, mesmo que as versões não otimizadas estourem memória e timeout, para garantir robustez e fidelidade ao enunciado. Valide as novas configurações com testes unitários."

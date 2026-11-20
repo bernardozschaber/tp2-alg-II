@@ -41,12 +41,16 @@ def solve(instance: TSPInstance, profiler: Optional[ProfilerSession] = None) -> 
     t0 = time.perf_counter()
 
     # Etapa 1: construção explícita do grafo completo não direcionado com N(N-1)/2 arestas.
+    round_to_int = instance.round_to_int
     with prof.profile("build_complete_graph"):
         G = nx.Graph()
         G.add_nodes_from(range(n))
         for u in range(n):
             for v in range(u + 1, n):
-                G.add_edge(u, v, weight=math.dist(coords[u], coords[v]))
+                w = math.dist(coords[u], coords[v])
+                if round_to_int:
+                    w = float(math.floor(w + 0.5))
+                G.add_edge(u, v, weight=w)
 
     # Etapa 2: AGM usando Kruskal genérico do NetworkX sobre o grafo completo.
     with prof.profile("mst"):

@@ -46,13 +46,13 @@ class TestStage1Core(unittest.TestCase):
     def test_opt_references_valid_euc2d_tours(self) -> None:
         """Verifica que todas as rotas em `opt_references.json` são válidas e têm custo consistente."""
         refs = load_opt_references()
-        for name in ("ulysses16", "ulysses22", "bays29", "att48", "berlin52", "st70"):
+        for inst in load_benchmark_suite():
+            name = inst.name
             self.assertIn(name, refs)
-            inst = load_tsplib_instance(name)
             tour = refs[name]["tour"]
             self.assertTrue(inst.validate_tour(tour))
             self.assertAlmostEqual(inst.tour_cost(tour), refs[name]["euc2d_cost"], places=4)
-            self.assertEqual(refs[name]["source"], "tsplib_opt_tour")
+            self.assertIn(refs[name]["source"], ("tsplib_opt_tour", "exact_euc2d_oracle"))
 
     def test_euclidean_metric_properties(self) -> None:
         """Verifica não-negatividade, diagonal nula, simetria e desigualdade triangular em ulysses16."""
