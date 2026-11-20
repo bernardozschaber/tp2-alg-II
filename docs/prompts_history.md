@@ -15,3 +15,13 @@
 7. "Faça uma revisão e auditoria profunda de tudo o que foi implementado nas Etapas 1, 2 e 3, explicando em detalhes o funcionamento do código, o papel do `tracemalloc` e as decisões metodológicas." 
 
 8. "Explicite a descrição do funcionamento do código adicionando comentários de forma pragmática e exaustiva em todos os módulos implementados, refletindo de forma robusta as decisões e correções que estruturamos."
+
+9. "Planeje a implementação do algoritmo aproximado Twice-around-the-tree a partir da interface pré-definida no projeto, propondo uma versão tradicional e outra otimizada seguindo as metodologias e regras de bibliotecas permitidas do enunciado, apresentando as decisões para aprovação antes de codificar."
+
+10. "Analise se existe alguma alternativa mais eficiente para o Twice-around-the-tree com o uso de GPU, como feito no Branch-and-Bound, e explique os impactos de cada decisão arquitetural proposta antes de iniciar a implementação."
+
+11. "Siga apenas com as duas implementações em CPU (v0: abordagem literal sobre biblioteca de grafos com grafo completo, Árvore Geradora Mínima, multigrafo duplicado, circuito euleriano e remoção de repetições, com subrotinas instrumentadas separadamente; v1: Prim denso em módulo compartilhado e busca em profundidade iterativa em pré-ordem mantendo a ordem natural das arestas), integrando a versão otimizada como estratégia de warm-start."
+
+12. "Mantenha os testes unitários dos algoritmos aproximados juntos na mesma suíte, adicionando a validação do Twice-around-the-tree (rotas válidas, fator de aproximação <= 2 contra o oráculo exato, consistência da Árvore Geradora Mínima, profiling por subrotina e segurança iterativa), inclua o Twice-around-the-tree nos testes de warm-start do Branch-and-Bound."
+
+13. "Faça uma revisão e auditoria profunda da implementação do Twice-around-the-tree e de sua integração ao restante do projeto, verificando casos de borda, complexidade e profiling, e refine a descrição do funcionamento do código adicionando comentários pragmáticos e claros que reflitam as decisões adotadas."
