@@ -360,7 +360,11 @@ def _escape_latex(val: object, float_fmt: str = "%.4f") -> str:
     if val is None or (isinstance(val, float) and np.isnan(val)):
         return "NA"
     if isinstance(val, (float, np.floating)):
-        return float_fmt % float(val)
+        fval = float(val)
+        formatted = float_fmt % fval
+        if formatted.startswith("-") and set(formatted[1:]) <= {"0", "."}:
+            formatted = formatted[1:]
+        return formatted
     if isinstance(val, (int, np.integer)):
         return str(int(val))
     text = str(val)

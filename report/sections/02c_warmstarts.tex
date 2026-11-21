@@ -1,0 +1,158 @@
+\subsection{Estratégias de Inicialização (\textit{Warm-Start}) para a Busca Exata}
+\label{sec:warm_starts}
+
+O desempenho de um algoritmo de \textit{Branch-and-Bound} depende criticamente da qualidade do
+seu melhor custo conhecido, denominado \textbf{limite superior incumbente} ($UB$). Antes mesmo
+de expandir o primeiro ramo da árvore de busca, qualquer circuito hamiltoniano válido $H_0$
+fornece um limite inicial $UB_0 = c(H_0) \ge OPT$. Durante toda a exploração subsequente,
+qualquer caminho parcial $s$ cujo limite inferior satisfaça $LB(s) \ge UB$ pode ser descartado
+com segurança, pois nenhuma extensão de $s$ poderá melhorar a solução já disponível.
+
+Essa mecânica caracteriza a estratégia de \textbf{\textit{warm-start}}: investir um pequeno
+tempo polinomial prévio para construir uma rota inicial de boa qualidade com o objetivo de
+enxugar drasticamente a árvore exponencial da busca exata. Contudo, existe um compromisso
+(\textit{trade-off}) claro entre o custo computacional da heurística inicializadora e o aperto
+do limite $UB_0$ obtido. Para investigar sistematicamente esse compromisso, implementamos cinco
+estratégias progressivas de inicialização:
+
+\begin{enumerate}
+  \item \textbf{Inicialização fria (\textit{Cold Start})}: adota o circuito trivial na ordem
+  natural dos índices, $0 \rightarrow 1 \rightarrow \dots \rightarrow N - 1 \rightarrow 0$, em
+  tempo $\Theta(N)$. Como ignora completamente a geometria dos pontos, seu custo tende a ser
+  muito distante do ótimo, atuando como linha de base sem poda inicial efetiva.
+
+  \item \textbf{Vizinho Mais Próximo (\textit{Nearest Neighbor})}: inicia no vértice $0$ e, a
+  cada passo, estende o caminho para o vértice ainda não visitado mais próximo do vértice atual,
+  fechando o ciclo ao final em tempo $\Theta(N^2)$ e espaço $\Theta(N)$. Embora muito rápida,
+  essa heurística é puramente míope: decisões localmente baratas no início frequentemente deixam
+  vértices isolados em regiões opostas do plano para as últimas etapas, forçando arestas longas
+  e custosas no fechamento do ciclo.
+
+  \item \textbf{Twice-Around-The-Tree}: reutiliza a versão otimizada da
+  Seção~\ref{sec:twice_around} em tempo $\Theta(N^2)$, fornecendo garantia formal de custo
+  inferior a $2 \cdot OPT$.
+
+  \item \textbf{Algoritmo de Christofides}: reutiliza a versão otimizada da
+  Seção~\ref{sec:christofides} em tempo $O(N^2 + |I|^3)$, oferecendo a melhor garantia formal de
+  pior caso dentre as estratégias ($1{,}5 \cdot OPT$) ao custo adicional do emparelhamento
+  Blossom.
+
+  \item \textbf{Inserção em Fecho Convexo (\textit{Convex Hull Insertion})}: combina a
+  geometria global do plano euclidiano com um critério guloso de inserção mínima, detalhado a
+  seguir juntamente com a refatoração assintótica que reduziu sua complexidade de $O(N^3)$ para
+  $O(N^2 \log N)$.
+\end{enumerate}
+
+\subsubsection{Inserção em Fecho Convexo: Varredura de Graham e Refatoração \texorpdfstring{$O(N^3) \rightarrow O(N^2 \log N)$}{O(N3) -> O(N2 log N)}}
+\label{sec:convex_hull_refactoring}
+
+A motivação geométrica da heurística baseia-se em uma propriedade clássica do TSP Euclidiano
+bidimensional: uma rota ótima no plano jamais cruza a si mesma (pois descruzar duas arestas
+sempre reduz o perímetro pela desigualdade triangular) e, como consequência, os vértices
+situados na fronteira externa da nuvem de pontos (o \textbf{fecho convexo}) aparecem ao longo
+do circuito ótimo exatamente na mesma ordem cíclica do polígono convexo. Iniciar a construção
+a partir do fecho convexo já posiciona corretamente todo o contorno global da instância antes
+de decidir onde encaixar os pontos interiores.
+
+\paragraph{Fase 1: Construção do fecho convexo pela Varredura de Graham ($O(N \log N)$).}
+Implementamos integralmente a Varredura de Graham \cite{graham1972efficient} sem recorrer a
+bibliotecas externas de geometria computacional. O procedimento elege primeiro o ponto âncora
+$p_0$ de menor coordenada $y$ (desempatando pelo menor $x$), garantindo que $p_0$ pertença ao
+fecho convexo. Em seguida, os $N - 1$ pontos restantes são ordenados em sentido anti-horário
+pelo ângulo polar em torno de $p_0$. Em conformidade com a primeira parte da disciplina, 
+uma decisão importante de robustez numérica nessa
+ordenação foi \textbf{evitar funções trigonométricas} (como arco-tangente): em vez de calcular
+ângulos aproximados em ponto flutuante, comparamos quaisquer dois pontos $a$ e $b$
+exclusivamente pelo sinal do produto vetorial bidimensional:
+\begin{equation}
+  \text{orient}(p_0, a, b) = (x_a - x_0)(y_b - y_0) - (y_a - y_0)(x_b - x_0).
+  \label{eq:cross_product}
+\end{equation}
+Geometricamente, $\text{orient}(p_0, a, b) > 0$ indica que o segmento $p_0 \to a \to b$ faz um
+giro à esquerda (logo $a$ precede $b$ no sentido anti-horário), valor negativo indica giro à
+direita ($b$ precede $a$) e valor nulo indica colinearidade. Quando vários pontos compartilham
+o mesmo raio a partir de $p_0$, descartam-se os intermediários mantendo apenas o ponto mais
+distante da âncora. Por fim, uma única passagem linear percorre os pontos ordenados mantendo uma
+pilha de vértices do fecho: antes de empilhar um novo candidato $p$, desempilha-se o topo
+enquanto os dois últimos vértices da pilha e $p$ não formarem um giro estritamente à esquerda
+($\text{orient} \le 0$). A ordenação custa $O(N \log N)$, enquanto cada ponto é empilhado no
+máximo uma vez e desempilhado no máximo uma vez, conferindo custo linear $\Theta(N)$ à
+varredura e complexidade total $O(N \log N)$.
+
+\paragraph{Fase 2: Inserção Mais Barata e a motivação da refatoração.}
+Obtido o polígono inicial $C$ com $h = |C|$ vértices e $h$ arestas, restam $N - h$ vértices
+interiores livres. Na estratégia de \textbf{Inserção Mais Barata} (\textit{Cheapest Insertion})
+\cite{rosenkrantz1977analysis}, cada iteração seleciona, dentre todos os vértices ainda livres
+$v \notin C$ e todas as arestas atualmente ativas $(u, w) \in C$, o par que minimiza
+globalmente o acréscimo marginal de comprimento ao substituir $(u, w)$ pelo par de arestas
+$(u, v)$ e $(v, w)$:
+\begin{equation}
+  \Delta(u, v, w) = c(u, v) + c(v, w) - c(u, w).
+  \label{eq:cheapest_delta}
+\end{equation}
+
+Uma implementação direta desse critério recalcula $\Delta(u, v, w)$ para todos os pares entre
+vértices livres e arestas do ciclo a cada nova inserção. Como existem $O(N)$ vértices livres e
+$O(N)$ arestas no ciclo durante grande parte do processo, cada passo custa $\Theta(N^2)$;
+repetido por $N - h$ inserções, o algoritmo ingênuo incorre em complexidade cúbica $O(N^3)$.
+
+Entretanto, uma observação estrutural simples revela que quase todo esse trabalho é redundante.
+Suponha que o ciclo atual possua $20$ arestas e decidamos inserir o vértice $v$ na aresta
+$(u, w)$. Essa inserção modifica o ciclo de forma estritamente local: exatamente \emph{uma}
+aresta antiga, $(u, w)$, deixa de existir, e exatamente \emph{duas} novas arestas, $(u, v)$ e
+$(v, w)$, passam a existir. Todas as outras $19$ arestas do ciclo permanecem absolutamente
+inalteradas, e os valores de $\Delta$ já calculados para todos os vértices livres em relação a
+essas $19$ arestas continuam válidos.
+
+\paragraph{Estruturas de dados da versão refatorada: lista circular e validação preguiçosa.}
+Para explorar essa invariância local sem sacrificar o critério global exato da Inserção Mais
+Barata, acoplamos duas estruturas elementares:
+\begin{itemize}
+  \item \textbf{Lista circular estática por vetor de sucessores}: representamos o ciclo ativo
+  por um único vetor inteiro \texttt{sucessor} de tamanho $N$, no qual \texttt{sucessor}$[u] = w$
+  indica que a aresta dirigida $(u, w)$ pertence atualmente ao ciclo. Inserir $v$ entre $u$ e
+  $w$ resume-se a duas atribuições em $\Theta(1)$ (\texttt{sucessor}$[u] \leftarrow v$ e
+  \texttt{sucessor}$[v] \leftarrow w$), e testar se uma aresta histórica $(u, w)$ ainda está
+  ativa resume-se a verificar em $\Theta(1)$ se \texttt{sucessor}$[u] = w$.
+  \item \textbf{Fila de prioridades mínima com validação preguiçosa (\textit{lazy deletion})}:
+  inicialmente, inserimos na fila de prioridades uma entrada $(\Delta(u, v, w), v, u, w)$ para
+  cada uma das $h$ arestas do fecho convexo pareada com cada um dos $N - h$ vértices livres.
+  Em vez de tentar localizar e remover da fila todas as entradas tornadas obsoletas quando uma
+  aresta é dividida ou um vértice é inserido (o que exigiria buscas lineares custosas),
+  deixamos essas entradas inertes na fila e validamos apenas o elemento extraído do topo em
+  $\Theta(1)$: se o vértice $v$ já foi inserido anteriormente ou se a aresta $(u, w)$ não é mais
+  ativa (\texttt{sucessor}$[u] \ne w$), a entrada é imediatamente descartada e extrai-se a
+  próxima. Assim que uma entrada válida emerge do topo, ela é garantidamente o mínimo global
+  atual; efetuamos a inserção de $v$ em $\Theta(1)$ e enfileiramos novos candidatos
+  \emph{apenas} para as duas novas arestas $(u, v)$ e $(v, w)$ combinadas com os vértices que
+  permanecem livres.
+\end{itemize}
+
+\paragraph{Demonstração de complexidade ($O(N^2 \log N)$).}
+Partindo de $h$ arestas iniciais no fecho convexo e realizando exatamente $N - h$ inserções,
+cada inserção cria exatamente $2$ novas arestas. Portanto, o número total de arestas distintas
+que chegam a existir em qualquer instante ao longo de toda a execução é:
+\begin{equation}
+  E_{\text{total}} = h + 2(N - h) = 2N - h < 2N.
+\end{equation}
+Cada aresta criada é pareada com no máximo $N - 3 < N$ vértices livres no instante de sua
+criação, limitando o número total de entradas inseridas na fila de prioridades durante toda a
+execução a no máximo $2N \cdot N = O(N^2)$. Como cada entrada inserida é extraída no máximo uma
+vez (seja para ser aceita ou descartada em $\Theta(1)$ pela validação preguiçosa) e o custo de
+cada inserção ou extração em uma fila de prioridades binária de tamanho $O(N^2)$ é
+$O(\log(N^2)) = O(\log N)$, a complexidade temporal total da Inserção Mais Barata refatorada é
+estritamente \textbf{$O(N^2 \log N)$}, preservando exatamente a mesma sequência de escolhas da
+formulação cúbica. Nota-se ainda que o limite quadrático estrito $O(N^2)$ só seria atingível
+relaxando o critério global da Inserção Mais Barata para uma variante mais fraca, como a
+Inserção Mais Próxima (\textit{Nearest Insertion}), na qual o vértice a inserir é fixado antes
+de escolher a aresta \cite{rosenkrantz1977analysis}.
+
+\paragraph{Hipóteses teóricas pré-experimentais ($H_W$).}
+Como todas as cinco estratégias de \textit{warm-start} executam em tempo polinomial baixo frente
+ao espaço fatorial da busca exata, formulamos duas expectativas para avaliação na
+Seção~\ref{sec:experimentos}: (i) a Varredura de Graham e a Inserção Mais Barata refatorada
+devem seguir empírica e separadamente os modelos $O(N \log N)$ e $O(N^2 \log N)$; e (ii)
+estratégias capazes de produzir limites iniciais $UB_0$ mais apertados (em particular aquelas
+que preservam estrutura global, como o Fecho Convexo e Christofides) devem compensar amplamente
+seu tempo inicial polinomial ao podar grandes porções da árvore de busca exata, superando o
+\textit{Cold Start} e o Vizinho Mais Próximo no tempo total combinado.

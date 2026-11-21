@@ -1,0 +1,342 @@
+\subsection{Busca Exata via \textit{Branch-and-Bound}: Fundamentação e Otimizações Graduais (\texttt{v0} \texorpdfstring{$\rightarrow$}{->} \texttt{v3})}
+\label{sec:bnb_otimizacoes}
+
+Alimentado pelo limite superior inicial $UB_0$ fornecido por uma das estratégias da
+Seção~\ref{sec:warm_starts}, o algoritmo exato resolve o TSP por enumeração implícita com poda
+(\textit{Branch-and-Bound}) \cite{levitin2012design}. A seguir, formalizamos primeiro a árvore
+de estados e a derivação algébrica do limite inferior que viabilizou nossas otimizações, para
+então apresentar em profundidade a progressão controlada das quatro versões implementadas.
+
+\subsubsection{Árvore de Busca e Derivação do Limite Inferior Incremental de Grau 2}
+\label{sec:bnb_bound}
+
+Como todo circuito hamiltoniano passa por todos os vértices, fixamos sem perda de generalidade
+o vértice de partida $v_0 = 0$. Um estado (ou nó) na profundidade $L \in \{1, \dots, N\}$ da
+árvore de busca corresponde a um caminho simples parcial
+$s = \langle v_0, v_1, \dots, u, k \rangle$ visitando $L$ vértices distintos, cujo custo
+acumulado é $\text{cost}(s) = \sum_{i=0}^{L-2} c(v_i, v_{i+1})$. Ao expandir $s$, o algoritmo
+ramifica o problema gerando até $m = N - L$ filhos candidatos, um para cada vértice livre
+$w \notin s$. Quando a busca atinge uma folha ($L = N$), basta fechar o ciclo somando a aresta
+de retorno $(k, 0)$; se o custo completo for estritamente menor que o incumbente atual $UB$,
+atualizamos $UB$ e registramos a nova melhor rota. Para analisar o crescimento dessa árvore,
+denotamos por $b$ o \textbf{fator de ramificação efetivo} (número médio de filhos que
+sobrevivem à poda por nó expandido, sempre limitado por $N - L$) e por $d \le N$ a profundidade
+alcançada pela fronteira ativa de exploração.
+
+\paragraph{Intuição e derivação algébrica do limite inferior por relaxação de grau 2:}
+A eficácia do \textit{Branch-and-Bound} repousa na capacidade de estimar, para qualquer caminho
+parcial $s$, um \textbf{limite inferior admissível} $LB(s)$ que garanta $LB(s) \le c(H)$ para
+todo circuito hamiltoniano $H$ que estenda $s$. Em qualquer circuito válido $H$, cada vértice
+$v \in V$ possui exatamente grau $2$ (uma aresta de entrada e uma aresta de saída). Se somarmos
+os pesos das duas arestas incidentes a cada vértice ao longo de todos os $N$ vértices, cada
+aresta $(x, y) \in H$ será somada exatamente duas vezes (uma na conta de $x$ e outra na conta
+de $y$):
+\begin{equation}
+  c(H) = \frac{1}{2} \sum_{v \in V} \bigl(\text{peso das duas arestas incidentes a } v \text{ em } H\bigr).
+\end{equation}
+Relaxando a exigência de conectividade global e requerendo apenas que cada vértice escolha duas
+arestas incidentes distintas compatíveis com as arestas já fixadas em $s$, obtemos um limite
+inferior válido. Para tornar esse cálculo exato e direto, observe que os $N$ vértices do grafo
+dividem-se em exatamente três papéis diante de um caminho parcial
+$s = \langle 0, v_1, \dots, u, k \rangle$ com $L \ge 2$ vértices:
+\begin{enumerate}
+  \item \textbf{Vértices internos ($v_1, \dots, u$)}: já possuem ambas as suas arestas no ciclo
+  final determinadas pelo caminho $s$ (a aresta que chega e a aresta que sai).
+  \item \textbf{Extremidades do caminho ($0$ e $k$)}: cada extremidade já possui exatamente uma
+  aresta fixada, a saber $(0, v_1)$ para o vértice $0$ e $(u, k)$ para o vértice $k$. Resta
+  escolher a menor \emph{segunda} aresta distinta incidente a cada extremidade. Denotando por
+  $\text{min1}[v]$ e $\text{min2}[v]$ os pesos da menor e da segunda menor aresta incidentes a
+  $v$, e por $\text{min1\_idx}[v]$ o vizinho que realiza $\text{min1}[v]$, a menor outra aresta
+  disponível para uma extremidade $v$ cujo vizinho fixado é $w_{\text{fix}}$ vale exatamente:
+  \begin{equation}
+    e_{\text{outro}}(v, w_{\text{fix}}) =
+    \begin{cases}
+      \text{min2}[v], & \text{se } w_{\text{fix}} = \text{min1\_idx}[v], \\
+      \text{min1}[v], & \text{caso contrário.}
+    \end{cases}
+    \label{eq:e_outro}
+  \end{equation}
+  A intuição é imediata: se a aresta mais curta de $v$ já foi usada na ligação com
+  $w_{\text{fix}}$, a segunda aresta distinta terá custo no mínimo $\text{min2}[v]$; caso
+  contrário, a menor aresta de $v$ ainda está disponível com peso $\text{min1}[v]$.
+  \item \textbf{Vértices ainda livres ($w \notin s$)}: nenhuma de suas duas arestas foi fixada,
+  logo sua contribuição mínima possível à soma de graus é $\text{min1}[w] + \text{min2}[w]$.
+\end{enumerate}
+
+Ao somar as contribuições desses três grupos, observe que toda aresta fixada $(v_i, v_{i+1})$
+do caminho parcial $s$ aparece exatamente duas vezes: uma vez na conta de $v_i$ e outra na
+conta de $v_{i+1}$ (sejam eles internos ou extremidades). Assim, a soma de todas as arestas já
+fixadas iguala exatamente $2 \cdot \text{cost}(s)$. Reunindo essa parcela às segundas arestas
+das extremidades e às duas menores arestas dos vértices livres, obtemos a identidade fechada
+para a soma dobrada $S(s)$:
+\begin{equation}
+  S(s) = 2 \cdot \text{cost}(s) + e_{\text{outro}}(0, v_1) + e_{\text{outro}}(k, u)
+         + \underbrace{\sum_{w \notin s} \bigl(\text{min1}[w] + \text{min2}[w]\bigr)}_{R(s)}.
+  \label{eq:bound_incremental}
+\end{equation}
+A consequência algorítmica da Equação~\eqref{eq:bound_incremental} é profunda. Uma formulação
+ingênua recalcula o limite inferior varrendo todos os $N$ vértices e suas $N - 1$ arestas a
+cada filho gerado, gastando $O(N^2)$ por candidato. Em contraste, pré-computando uma única vez
+os vetores $\text{min1}$, $\text{min2}$ e $\text{min1\_idx}$ em $O(N^2 \log N)$ antes da busca
+e mantendo apenas o escalar $R(s)$ no estado atual, o passo de estender $s$ até um filho livre
+$w$ consiste simplesmente em atualizar $R(s') = R(s) - (\text{min1}[w] + \text{min2}[w])$ e
+avaliar a Equação~\eqref{eq:bound_incremental} em tempo estritamente \textbf{$\Theta(1)$}.
+
+\paragraph{Invariante de admissibilidade em métricas contínuas versus inteiras:}
+Na apresentação clássica para grafos com pesos inteiros \cite{levitin2012design}, utiliza-se o
+arredondamento para cima $LB(s) = \lceil S(s)/2 \rceil$, pois todo circuito completo terá custo
+inteiro. Contudo, sob distâncias euclidianas contínuas em ponto flutuante, o operador teto
+viola a admissibilidade e pode destruir a otimalidade da busca. Como exemplo concreto, suponha
+que o ciclo ótimo verdadeiro de uma instância possua custo $10{,}2$ e que, em um prefixo desse
+ótimo, a relaxação forneça $S(s)/2 = 10{,}1 \le 10{,}2$. Aplicar o operador teto produziria
+$\lceil 10{,}1 \rceil = 11 > 10{,}2$, podando erroneamente o próprio ramo ótimo caso já se
+conheça um incumbente de custo $10{,}8$. Por esse motivo, adotamos estritamente
+$LB(s) = S(s)/2$ em instâncias contínuas, reservando o arredondamento ao teto (com margem de
+segurança numérica $\epsilon = 10^{-9}$ em $\lceil S(s)/2 - \epsilon \rceil$, para evitar que
+um valor exato como $10{,}000000000000002$ em aritmética binária salte para $11$) apenas ao
+modo de pesos inteiros.
+
+\subsubsection{Progressão Gradual de Refatorações (\texttt{v0} \texorpdfstring{$\rightarrow$}{->} \texttt{v3})}
+\label{sec:bnb_versoes}
+
+Para isolar com clareza o ganho e as limitações de cada intervenção técnica, implementamos
+quatro versões incrementais do \textit{Branch-and-Bound}, nas quais cada estágio resolve o
+principal gargalo deixado pelo estágio anterior.
+
+\paragraph{Versão \texttt{v0\_naive} (Baseline literal: busca \textit{Best-First} e limite do zero):}
+Esta versão reproduz fielmente a formulação clássica de livro-texto \cite{levitin2012design}:
+mantém uma fila de prioridades mínima global ordenada pelo valor de $LB(s)$, expandindo sempre
+o nó aberto globalmente mais promissor de toda a árvore (estratégia \textit{Best-First}). Cada
+estado armazenado na fila contém seu limite inferior, sua profundidade, seu custo acumulado e
+uma cópia própria da lista de vértices do caminho parcial. Ao expandir um nó de profundidade
+$L$, o algoritmo testa cada vértice $w \in V$ por busca linear na lista do caminho ($O(L)$),
+gera uma cópia acrescida da lista ($O(L)$) e recalcula o limite inferior de grau $2$ varrendo
+todos os $N$ vértices e suas $N - 1$ arestas ($O(N^2)$). Como há $N - L$ filhos candidatos, o
+trabalho por nó expandido atinge $O(N^3)$.
+
+Mais grave que o custo temporal por nó, todavia, é o crescimento espacial da fila global.
+Como a estratégia \textit{Best-First} mantém simultaneamente em memória toda a fronteira aberta
+de estados promissores enquanto alterna entre subárvores distintas, uma busca que alcance
+profundidade $d$ com fator de ramificação efetivo $b > 1$ pode acumular até $O(b^d)$ estados na
+fila. Como cada estado carrega sua própria lista de caminho de tamanho $O(N)$, a memória ativa
+cresce exponencialmente em $O(b^d \cdot N)$, submetendo o ambiente de execução a forte pressão
+do coletor de lixo e ao risco de esgotamento completo da memória principal (\textit{Out of
+Memory}, OOM).
+
+\textit{Hipótese $H_0$}: Espera-se que o custo cúbico por expansão e o acúmulo exponencial de
+estados na fila \textit{Best-First} levem a versão \texttt{v0\_naive} a tempos impraticáveis ou
+ao colapso por falta de memória já nas instâncias pequenas e intermediárias da faixa principal.
+
+\paragraph{Versão \texttt{v1\_gpu} (1ª Otimização: avaliação em lote do limite inferior em GPU):}
+A primeira refatoração ataca o gargalo aritmético do recálculo do limite inferior, mantendo
+deliberadamente inalterada a estratégia global \textit{Best-First} para permitir uma ablação
+limpa do paralelismo de dados. O projeto dessa etapa baseia-se no modelo físico de execução de
+unidades gráficas (GPUs). Diferentemente de uma CPU otimizada para baixa latência em fluxos
+sequenciais, uma GPU possui milhares de núcleos paralelos projetados para aplicar a mesma
+expressão aritmética simultaneamente sobre vetores longos. Porém, cada transferência de dados
+entre a memória principal (CPU) e a memória de vídeo (GPU) pelo barramento PCIe, somada ao
+disparo de um \textit{kernel}, acarreta uma latência fixa elevada. Enviar à GPU apenas os
+$m < 70$ filhos de um único nó gastaria muito mais tempo em comunicação e sincronização do que
+no cálculo aritmético propriamente dito.
+
+Para amortizar essa latência, a versão \texttt{v1\_gpu} pré-computa os vetores $\text{min1}$,
+$\text{min2}$ e $\text{min1\_idx}$ uma única vez mantendo-os residentes no dispositivo e modifica
+o laço principal para retirar da fila de prioridades um \textbf{lote} (\textit{batch}) de até
+$B$ nós pais simultaneamente (por exemplo, $B = 128$ ou $1024$). Todas as transições filhas
+desses $B$ pais são empacotadas em vetores unidimensionais contíguos de comprimento agregado
+$M = \sum_{p=1}^{B} (N - L_p)$, avaliando a Equação~\eqref{eq:bound_incremental} para milhares
+de candidatos em uma única chamada vetorizada paralela (executada em GPU via CUDA quando a
+aceleração gráfica está habilitada, ou em arranjos vetorizados na CPU em caso contrário). Além
+disso, incorporamos um mecanismo de consistência do incumbente: se, durante a montagem do lote,
+um dos estados retirados for uma folha ($L = N$) que melhora $UB$, todos os demais pais já
+extraídos para o mesmo lote são imediatamente refiltrados contra o novo $UB$ antes da geração
+de filhos.
+
+Apesar do ganho aritmético, duas limitações estruturais emergem diretamente da análise teórica.
+Primeiro, retirar $B$ pais de uma só vez introduz \textbf{expansão especulativa em lote}: na
+busca sequencial estrita, expandir o primeiro pai poderia descobrir rapidamente uma folha
+melhor que reduziria $UB$ e podaria os pais seguintes; ao retirá-los juntos em um mesmo lote,
+o algoritmo pode expandir estados adicionais que a versão sequencial evitaria, especialmente
+sob inicialização frouxa. Segundo, como a fronteira aberta continua residindo na fila global
+\textit{Best-First}, a complexidade espacial ativa permanece exponencial em $O(b^d \cdot N)$.
+
+\textit{Hipótese $H_1$}: Prevê-se redução expressiva no custo temporal por candidato avaliado em
+relação a \texttt{v0\_naive}, acompanhada possivelmente de aumento no número de nós expandidos
+por especulação em lote sob limites iniciais frouxos e da persistência do risco de esgotamento
+de memória (OOM) à medida que $N$ cresce, testando se a aceleração puramente aritmética basta
+sem reformulação estrutural de memória.
+
+\paragraph{Versão \texttt{v2\_dfs\_memory} (2ª Otimização: refatoração espacial via \textit{Best-Child-First DFS in-place}):}
+Para eliminar de forma definitiva o teto de memória exponencial da busca \textit{Best-First},
+substituímos a fila global por uma \textbf{busca em profundidade com ordenação local dos filhos
+(\textit{Best-Child-First DFS}) operando \textit{in-place}}. Nessa estratégia, apenas um único
+caminho da raiz até o nó corrente encontra-se ativo em qualquer instante. Em vez de duplicar
+listas para cada filho gerado, a recursão compartilha um único vetor mutável de caminho e um
+único vetor booleano de vértices visitados de tamanho $N$: ao descer para um filho $w$,
+escreve-se $w$ na posição $L$ do caminho e marca-se $w$ como visitado; ao retornar da chamada
+recursiva (\textit{backtracking}), desfaz-se a marcação em $\Theta(1)$.
+
+Uma busca em profundidade arbitrária poderia perder-se por muito tempo em subárvores ruins antes
+de encontrar uma rota boa capaz de apertar $UB$. Para preservar a virtude heurística da busca
+pelo melhor primeiro sem pagar seu preço em RAM, cada nó calcula a
+Equação~\eqref{eq:bound_incremental} para todos os seus filhos livres, descarta imediatamente
+aqueles que já satisfazem $LB \ge UB$ (\textbf{poda na geração}) e ordena os sobreviventes em
+ordem crescente de limite inferior, descendo primeiro nos ramos mais promissores. Sempre que
+uma folha melhora $UB$, ao retornar aos níveis ancestrais cada irmão remanescente é novamente
+verificado antes de ser expandido (\textbf{poda na visita}), descartando subárvores inteiras
+sem entrar nelas.
+
+\textit{Análise espacial rigorosa}: Com essa reformulação, a profundidade da pilha de recursão
+(equivalente ao número de estados ativos simultâneos) fica estritamente limitada a $N$
+($\Theta(N)$), e os vetores compartilhados de caminho e visitados ocupam $\Theta(N)$. Mesmo
+contabilizando as listas locais de filhos sobreviventes retidas simultaneamente em todos os
+níveis ativos da pilha de recursão, a soma no pior caso é
+$\sum_{L=1}^{N} (N - L) = N(N - 1)/2 = O(N^2)$ pequenos pares escalares (para $N = 70$, no
+máximo $2.415$ pares, da ordem de poucos quilobytes), rompendo por completo qualquer
+dependência exponencial em relação ao tamanho da árvore $b^d$.
+
+\textit{Decisão arquitetural sobre a GPU na fronteira de nível 2}: Durante a auditoria dessa
+versão, identificou-se que acionar a GPU no interior de cada nó recursivo da DFS seria
+prejudicial, pois um nó individual possui no máximo $m = N - L < 70$ filhos, fazendo a
+latência de barramento PCIe dominar o tempo total em milhões de chamadas curtas. A solução
+arquitetural consiste em deslocar o paralelismo gráfico para a \textbf{fronteira completa de
+nível 2}: fixada a origem $v_0 = 0$, há $N - 1$ escolhas para o primeiro passo $v_1$ e $N - 2$
+escolhas para o segundo passo $v_2$, formando exatamente $(N - 1)(N - 2)$ subproblemas
+independentes de profundidade $3$ (entre $1.482$ e $4.692$ subárvores para
+$N \in [40, 70]$). Antes de iniciar a recursão, essa fronteira inteira é avaliada e ordenada em
+um único lote paralelo na GPU, podando de imediato subárvores inviáveis e despachando as
+sobreviventes em ordem crescente de limite inferior para a DFS recursiva, cujo laço interno
+utiliza operações vetorizadas locais na CPU sem viagens ao barramento gráfico.
+
+\textit{Hipótese $H_2$}: A troca para \textit{Best-Child-First DFS in-place} deve eliminar
+integralmente as falhas de esgotamento de memória (OOM) em todas as 15 instâncias, mantendo o
+pico de estados ativos estritamente limitado por $N$. Como questão empírica aberta, resta
+avaliar se o custo fixo de alocar pequenos vetores intermediários a cada chamada recursiva da
+DFS limita a vazão de nós por segundo na CPU.
+
+\paragraph{Versão \texttt{v3\_fast\_bound} (3ª Otimização: escalar $\Theta(1)$, \textit{bitmask} e quebra de simetria interna):}
+Com a memória controlada em espaço polinomial baixo, o tempo de execução passa a depender de
+dois fatores decisivos: a constante multiplicativa do laço mais interno (executado milhões de
+vezes) e a redundância combinatória da árvore de busca. A versão \texttt{v3\_fast\_bound}
+ataca simultaneamente ambos os fatores por meio de três refatorações acopladas:
+
+\begin{enumerate}
+  \item \textbf{Avaliação escalar nativa $\Theta(1)$ sem alocações temporárias}:
+  Mesmo operações vetorizadas rápidas em CPU pagam um custo fixo de despacho e criação de
+  pequenos objetos de arranjo quando invocadas sobre apenas $5$ a $40$ elementos por nó. Na
+  versão \texttt{v3}, convertemos a matriz de distâncias e os vetores pré-computados uma única
+  vez para listas escalares nativas da linguagem antes da recursão. Além disso, observamos pela
+  Equação~\eqref{eq:bound_incremental} que o termo $e_{\text{outro}}(0, v_1)$ depende apenas do
+  primeiro vértice escolhido após a raiz, permanecendo \textbf{constante em toda a subárvore
+  enraizada em $v_1$}. Fatorando esse valor fora da recursão, o cálculo do limite inferior de
+  cada filho reduz-se a quatro operações aritméticas escalares elementares sem nenhuma alocação
+  dinâmica de vetores.
+
+  \item \textbf{Representação dos vértices livres por máscara de bits (\textit{bitmask}) e
+  extração direta via \textit{lowbit}}:
+  Em um vetor booleano de tamanho $N$, encontrar os $m = N - L$ vértices ainda livres exige
+  varrer todas as $N$ posições a cada nó, desperdiçando trabalho linear em $N$ justamente nos
+  níveis mais profundos da árvore (onde restam apenas $2$, $3$ ou $4$ vértices livres, mas onde
+  se concentra a imensa maioria dos nós expandidos). Para eliminar essa varredura inútil,
+  representamos o conjunto de vértices livres em um único inteiro não negativo $M$ (com precisão
+  arbitrária nativa na linguagem, suportando $N > 64$ sem risco de estouro), no qual o bit de
+  posição $k$ (valor $2^k$) vale $1$ se e somente se o vértice $k$ ainda não foi visitado.
+  Marcar ou desmarcar um vértice resume-se a uma operação \texttt{XOR} bit a bit em $\Theta(1)$
+  ($M \oplus 2^k$).
+
+  Para percorrer exclusivamente os bits ativos de $M$ sem testar bits zerados, exploramos a
+  propriedade do complemento de dois conhecida como \textbf{\textit{lowbit}}: dado o inteiro
+  restante \texttt{rem}, a operação $\texttt{lowbit} = \texttt{rem} \mathbin{\&} (-\texttt{rem})$
+  isola exatamente o bit ativo menos significativo. Um exemplo binário concreto torna o
+  mecanismo transparente: suponha $N = 6$ e que apenas os vértices $\{1, 4\}$ permaneçam livres,
+  logo $\texttt{rem} = (010010)_2 = 18$. Em complemento de dois, negar o inteiro inverte todos os
+  bits e soma $1$, resultando em $-\texttt{rem} = (\dots 101110)_2$. O \texttt{AND} bit a bit
+  entre ambos zera todos os bits acima do primeiro $1$ à direita e preserva exatamente esse bit:
+  $(010010)_2 \mathbin{\&} (\dots 101110)_2 = (000010)_2 = 2^1$, revelando o vértice $1$ em
+  $\Theta(1)$ por tabela de consulta direta. Aplicando $\texttt{rem} \leftarrow \texttt{rem}
+  \oplus \texttt{lowbit}$, salta-se imediatamente para $(010000)_2 = 2^4$ (vértice $4$) sem
+  jamais inspecionar os vértices $0$, $2$, $3$ ou $5$. Assim, a iteração sobre os filhos de um
+  nó cai de $\Theta(N)$ para $\Theta(m)$, gerando ganho proporcionalmente maior nos níveis mais
+  profundos da árvore.
+
+  \item \textbf{Quebra de simetria reversa em nível interno via máscara de bits}:
+  Como a distância euclidiana é simétrica ($c(u, v) = c(v, u)$), todo circuito hamiltoniano
+  $(0, v_1, v_2, \dots, v_{N-1}, 0)$ possui custo rigorosamente idêntico ao de seu percurso
+  inverso $(0, v_{N-1}, \dots, v_2, v_1, 0)$. Para $N \ge 3$, o primeiro vértice após a origem
+  ($v_1$) e o último vértice antes do retorno ($v_{N-1}$) são necessariamente distintos; logo,
+  entre cada ciclo e seu reverso, exatamente uma das orientações satisfaz a condição canônica
+  $v_1 < v_{N-1}$. Restringir a busca a essa orientação reduz o espaço de soluções factíveis
+  exatamente pela metade, de $(N - 1)!$ para $(N - 1)!/2$, sem jamais eliminar o ótimo.
+
+  Uma implementação superficial verificaria $v_1 < v_{N-1}$ apenas ao chegar às folhas, já tendo
+  desperdiçado todo o trabalho da subárvore. Utilizando a máscara de bits $M$ dos vértices
+  livres, conseguimos detectar a inviabilidade da orientação canônica \textbf{ainda nos níveis
+  internos da árvore} em tempo $\Theta(1)$. Inicialmente, no nível $1$, proibimos $v_1 = N - 1$
+  (pois não existe nenhum vértice maior que $N - 1$ para encerrar o ciclo). Em qualquer nó
+  intermediário da subárvore de $v_1$ com $M > 0$, observe a soma geométrica dos pesos de todos
+  os bits estritamente menores que $v_1$:
+  \begin{equation}
+    \sum_{w = 0}^{v_1 - 1} 2^w = 2^{v_1} - 1 < 2^{v_1}.
+  \end{equation}
+  Em contrapartida, se existir ao menos um vértice ainda livre $w > v_1$, seu bit sozinho já
+  contribui com $2^w \ge 2^{v_1 + 1} > 2^{v_1}$, forçando $M > 2^{v_1}$. Portanto, a simples
+  comparação inteira em $\Theta(1)$:
+  \begin{equation}
+    0 < M < 2^{v_1}
+    \label{eq:symmetry_bitmask}
+  \end{equation}
+  é verdadeira \textbf{se e somente se todos os vértices ainda não visitados forem estritamente
+  menores que $v_1$}. Para visualizar o ganho em um exemplo concreto, considere $N = 6$ no ramo
+  que escolheu $v_1 = 3$ e suponha que, já na profundidade $3$, o caminho tenha visitado os
+  vértices $4$ e $5$, restando livres apenas $\{1, 2\}$. A máscara atual vale
+  $M = 2^1 + 2^2 = 6$, que é menor que $2^3 = 8$. Qualquer que seja a ordem em que $\{1, 2\}$
+  venham a ser visitados, o último vértice $v_5$ será $1$ ou $2$, violando inevitavelmente
+  $v_1 < v_5$. Logo, toda a subárvore abaixo desse nó intermediário é podada instantaneamente
+  na profundidade $3$, antes mesmo de ser expandida.
+
+  \textit{Prova de corretude}: Seja $H^* = (0, v_1^*, \dots, v_{N-1}^*, 0)$ a orientação
+  canônica de um circuito ótimo, satisfazendo $v_1^* < v_{N-1}^*$. Em todo prefixo próprio de
+  $H^*$ (níveis $L < N$), o último vértice $v_{N-1}^*$ ainda não foi visitado; logo, o bit
+  $2^{v_{N-1}^*}$ permanece ativo em $M$. Como $v_{N-1}^* > v_1^*$, tem-se
+  $M \ge 2^{v_{N-1}^*} > 2^{v_1^*}$ ao longo de todo ancestral de $H^*$, de modo que a condição
+  \eqref{eq:symmetry_bitmask} jamais poda a orientação canônica do ótimo.
+\end{enumerate}
+
+Cabe registrar uma sutileza dinâmica relevante dessa última otimização. Quando o
+\textit{Branch-and-Bound} parte de um limite superior inicial frouxo (como no \textit{Cold
+Start}), a ordenação pelo limite inferior pode inicialmente conduzir a busca justamente para a
+orientação reversa proibida de um ótimo local ou global. Nesse caso, podar essa orientação pode
+atrasar momentaneamente a descoberta de uma boa solução incumbente em comparação a uma DFS sem
+quebra de simetria, reduzindo temporariamente a poda nos primeiros ramos visitados. Quando a
+busca já inicia com um \textit{warm-start} apertado ($UB_0$ próximo de $OPT$), a dependência na
+descoberta precoce do incumbente desaparece e o corte de simetria atua diretamente em benefício
+da redução de estados.
+
+\textit{Hipótese $H_3$}: Espera-se que \texttt{v3\_fast\_bound} apresente a maior vazão de
+candidatos avaliados por segundo entre todas as versões, preservando espaço polinomial e
+cortando até metade do espaço de busca sob inicialização apertada, enquanto se investiga
+empiricamente se o efeito transitório de atraso na descoberta do incumbente se manifesta sob
+\textit{Cold Start}.
+
+A Tabela~\ref{tab:bnb_design} consolida a evolução arquitetural e assintótica das quatro
+versões, onde $N$ denota o número de vértices, $m = N - L$ o número de vértices livres na
+profundidade $L$, $b$ o fator de ramificação efetivo, $d \le N$ a profundidade máxima da
+fronteira aberta e $B$ o tamanho do lote enviado ao dispositivo paralelo.
+
+\begin{table}[htbp]
+  \centering
+  \caption{Evolução arquitetural e expectativas assintóticas das quatro versões graduais do \textit{Branch-and-Bound}.}
+  \label{tab:bnb_design}
+  \scriptsize
+  \resizebox{\linewidth}{!}{%
+  \begin{tabular}{lllllll}
+    \toprule
+    \textbf{Versão} & \textbf{Busca na Árvore} & \textbf{Bound / Filho} & \textbf{Iteração de Livres} & \textbf{Espaço Ativo} & \textbf{Simetria} & \textbf{Uso da GPU} \\
+    \midrule
+    \texttt{v0\_naive}      & \textit{Best-First} (fila global) & $O(N^2)$ do zero & Lista $\Theta(N)$ & $O(b^d \cdot N)$ & Não & Não \\
+    \texttt{v1\_gpu}        & \textit{Best-First} em lotes ($B$) & $\Theta(1)$ vetor. & Conjunto $\Theta(N)$ & $O(b^d \cdot N)$ & Não & Lotes de $B$ pais \\
+    \texttt{v2\_dfs\_memory}& \textit{Best-Child-First DFS} & $\Theta(1)$ vetor. & Vetor \texttt{bool} $\Theta(N)$ & $\Theta(N)$ pilha; $O(N^2)$ local & Não & Fronteira nível 2 \\
+    \texttt{v3\_fast\_bound}& \textit{Best-Child-First DFS} & $\Theta(1)$ escalar & \textit{Bitmask} $\Theta(m)$ & $\Theta(N)$ pilha; $O(N^2)$ local & Interna $\Theta(1)$ & Fronteira nível 2 \\
+    \bottomrule
+  \end{tabular}}
+\end{table}

@@ -1,0 +1,60 @@
+\section{Introdução}
+\label{sec:introducao}
+
+O Problema do Caixeiro Viajante (\textit{Traveling Salesman Problem}: TSP) consiste
+em determinar, para um grafo completo não direcionado $G = (V, E)$ com $|V| = N$ vértices e
+uma função de custo não negativa $c: E \rightarrow \mathbb{R}_{\ge 0}$, um circuito
+hamiltoniano $H^*$ de soma de arestas mínima que visite cada vértice exatamente uma vez e
+retorne à origem \cite{cormen2009clrs,levitin2012design}. Neste trabalho, concentramos o estudo
+no caso geométrico conhecido como TSP Euclidiano bidimensional (\texttt{EUC\_2D}), no qual cada
+vértice $v_i \in V$ corresponde a um ponto $p_i = (x_i, y_i) \in \mathbb{R}^2$ e o custo de
+cada aresta é dado pela distância euclidiana $c(u, v) = \|p_u - p_v\|_2$. Por satisfazer a
+desigualdade triangular, essa família de instâncias admite algoritmos polinomiais com
+garantias formais de qualidade, como \textit{Twice-Around-The-Tree} (fator de aproximação $2$) e 
+o algoritmo de Christofides (fator de $1{,}5$)
+\cite{christofides1976worst}, ao passo que a obtenção de soluções comprovadamente ótimas exige
+técnicas de enumeração implícita com poda, como \textit{Branch-and-Bound}
+\cite{levitin2012design}.
+
+Embora as propriedades teóricas dessas abordagens sejam amplamente estabelecidas na literatura,
+a passagem da descrição abstrata em livro-texto para um sistema executável revela uma lacuna
+significativa de engenharia de algoritmos. Implementações literais costumam ocultar gargalos
+severos de estruturas de dados e de organização de memória: filas de prioridade que crescem
+exponencialmente na memória principal, recálculos redundantes de limites inferiores, cópias
+repetidas de caminhos parciais e representações de grafos baseadas em objetos dinâmicos que
+desperdiçam memória em grafos completos densos. Em paralelo, decisões aparentemente secundárias,
+como o modo de inicializar o limite superior da busca exata ou a geometria espacial dos pontos
+de entrada, alteram drasticamente o comportamento empírico de algoritmos que compartilham a
+mesma classe de complexidade assintótica.
+
+Motivados por esse diagnóstico, estruturamos o presente estudo como uma investigação de
+\textbf{auditoria algorítmica e otimização gradual guiada por hipóteses}. Em lugar de apresentar
+apenas implementações finais monolíticas, construímos versões incrementais controladas tanto
+para os algoritmos aproximados (\texttt{v0} e \texttt{v1}) quanto para a busca exata
+(\texttt{v0} a \texttt{v3}). A cada etapa, isolamos um gargalo estrutural específico,
+formalizamos a motivação matemática e arquitetural da refatoração proposta, demonstramos seu
+efeito esperado sobre tempo, memória e corretude, e formulamos hipóteses testáveis a serem
+confrontadas com os dados experimentais.
+
+A investigação empírica apoia-se em uma base auditada de 15 instâncias da biblioteca TSPLIB com
+coordenadas bidimensionais nativas ($N \in [10, 70]$) e organiza-se em torno de três eixos:
+\begin{enumerate}
+  \item \textbf{Análise por subrotina e complexidade empírica}: decomposição de tempo e memória
+  por etapa interna dos algoritmos, verificando a aderência das curvas medidas aos modelos
+  assintóticos previstos (inclusive em função de parâmetros estruturais além de $N$, como o
+  número de vértices ímpares $|I|$) e avaliando o papel real da paralelização em GPU.
+  \item \textbf{Impacto da inicialização (\textit{warm-start}) na poda exata}: avaliação do
+  compromisso entre o tempo investido em cinco estratégias construtivas e a redução resultante
+  no número de estados explorados pelo \textit{Branch-and-Bound}.
+  \item \textbf{Sensibilidade topológica e instâncias adversariais}: modelagem estatística das
+  relações entre descritores geométricos e estruturais da entrada, o erro relativo das
+  aproximações e o enfraquecimento do limite inferior da busca exata.
+\end{enumerate}
+
+O restante do artigo segue a seguinte estrutura: A Seção~\ref{sec:implementacao} apresenta, nesta
+ordem, o tratamento da base de instâncias euclidianas, as implementações e otimizações dos
+algoritmos de aproximação com garantia formal, as estratégias de inicialização
+(\textit{warm-start}) que utilizam essas aproximações e heurísticas geométricas, a progressão
+gradual do \textit{Branch-and-Bound} alimentado por esses limites iniciais e, por fim, o
+protocolo de instrumentação experimental. A Seção~\ref{sec:experimentos} expõe a modelagem e
+os resultados experimentais, e a Seção~\ref{sec:conclusoes} sintetiza as principais conclusões.

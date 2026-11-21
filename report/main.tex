@@ -1,0 +1,151 @@
+\documentclass[12pt]{article}
+
+\usepackage{iftex}
+\usepackage[provide=*, brazilian]{babel}
+\usepackage{sbc-template}
+\ifPDFTeX
+  \usepackage[utf8]{inputenc}
+  \IfFileExists{ptmr8t.tfm}{}{%
+    \renewcommand{\rmdefault}{cmr}%
+    \renewcommand{\sfdefault}{cmss}%
+    \renewcommand{\ttdefault}{cmtt}%
+  }
+  \usepackage[T1]{fontenc}
+\else
+  \usepackage{fontspec}
+  \IfFontExistsTF{Nimbus Roman}{\setmainfont{Nimbus Roman}}{}
+  \IfFontExistsTF{Nimbus Sans}{\setsansfont{Nimbus Sans}}{}
+  \IfFontExistsTF{Nimbus Mono PS}{\setmonofont{Nimbus Mono PS}[Scale=MatchLowercase]}{}
+\fi
+\usepackage{graphicx}
+\usepackage{url}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{hyperref}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=black,
+  citecolor=black,
+  urlcolor=blue!60!black
+}
+
+\sloppy
+
+% Macros auxiliares para placeholders do restante do grupo e pendências dos experimentos.
+\newcommand{\placeholderGrupo}[1]{%
+  \begin{center}
+    \fcolorbox{blue!50!black}{blue!5}{%
+      \begin{minipage}{0.94\linewidth}
+        \small\textbf{[PLACEHOLDER -- INTEGRANTE DO GRUPO]} #1
+      \end{minipage}%
+    }
+  \end{center}
+}
+
+\newcommand{\todoLab}[1]{%
+  \textcolor{red!70!black}{\textbf{[AGUARDANDO LABORATÓRIO: #1]}}%
+}
+
+% Inclusão condicional de figuras e tabelas geradas automaticamente por `python -m src.cli analyze`.
+\newcommand{\includeFigIfExists}[4]{%
+  \begin{figure}[htbp]
+    \centering
+    \IfFileExists{#1}{%
+      \includegraphics[width=\linewidth]{#1}%
+    }{%
+      \fcolorbox{red!50!black}{red!4}{%
+        \begin{minipage}{0.92\linewidth}
+          \centering\small\vspace{0.6em}
+          \textbf{Figura ainda não gerada (\texttt{\detokenize{#1}})}\\
+          #4
+          \vspace{0.6em}
+        \end{minipage}%
+      }%
+    }
+    \caption{#2}
+    \label{#3}
+  \end{figure}
+}
+
+\newcommand{\includeTableIfExists}[4]{%
+  \begin{table}[htbp]
+    \centering
+    \caption{#2}
+    \label{#3}
+    \scriptsize
+    \IfFileExists{#1}{%
+      \resizebox{\linewidth}{!}{\input{#1}}%
+    }{%
+      \fcolorbox{red!50!black}{red!4}{%
+        \begin{minipage}{0.92\linewidth}
+          \centering\small\vspace{0.5em}
+          \textbf{Tabela ainda não gerada (\texttt{\detokenize{#1}})}\\
+          #4
+          \vspace{0.5em}
+        \end{minipage}%
+      }%
+    }
+  \end{table}
+}
+
+\title{Trabalho Prático 2 - Análise Empírica e Otimização para o Caixeiro Viajante}
+
+\author{Bernardo Zschaber Morato Nogueira\inst{1}, Mateus Matsura Teles Costa\inst{1},\\
+  Pedro Rangel Ferreira de Aguiar\inst{1}}
+
+\address{Departamento de Ciência da Computação -- Instituto de Ciências Exatas (ICEx)\\
+  Universidade Federal de Minas Gerais (UFMG) -- Belo Horizonte -- MG -- Brasil
+  \email{\{aluno1, matsuramateus, aluno3\}@dcc.ufmg.br}
+}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+This paper presents an algorithmic audit, a gradual optimization study, and a topological
+sensitivity analysis for the 2D Euclidean Traveling Salesman Problem (\texttt{EUC\_2D}) across
+15 native-coordinate TSPLIB instances ($N \in [10, 70]$). We analyze incremental refactorings
+across Twice-Around-The-Tree, Christofides (dense Prim, odd-subgraph Blossom isolation, and
+linear Hierholzer), five warm-start strategies (including an $O(N^2 \log N)$ lazy-heap
+convex-hull insertion), and four Branch-and-Bound versions (\texttt{v0}--\texttt{v3}: GPU
+batching, in-place DFS, $\Theta(1)$ degree-2 bounds, bitmasking, and internal symmetry
+breaking), evaluating complexity scaling, pruning trade-offs, and adversarial geometries.
+\end{abstract}
+
+\begin{resumo}
+Este artigo apresenta uma auditoria algorítmica, um estudo de otimização gradual e uma análise
+de sensibilidade topológica para o Problema do Caixeiro Viajante Euclidiano 2D
+(\texttt{EUC\_2D}) em 15 instâncias TSPLIB de coordenadas nativas ($N \in [10, 70]$).
+Analisamos refatorações incrementais no Twice-Around-The-Tree, em Christofides (Prim denso,
+isolamento do subgrafo ímpar e Hierholzer linear), em cinco estratégias de \textit{warm-start}
+(incluindo inserção em fecho convexo $O(N^2 \log N)$) e em quatro versões do Branch-and-Bound
+(\texttt{v0}--\texttt{v3}: lotes em GPU, DFS \textit{in-place}, limites $\Theta(1)$,
+\textit{bitmask} e quebra de simetria), investigando complexidade empírica, poda e geometrias
+adversariais.
+\end{resumo}
+
+\input{sections/01_introducao}
+\input{sections/02a_base_dados}
+\input{sections/02b_aproximados}
+\input{sections/02c_warmstarts}
+\input{sections/02d_bnb_otimizacoes}
+\input{sections/02e_instrumentacao}
+
+\section{Experimentos e Resultados (Modelagem)}
+\label{sec:experimentos}
+
+\todoLab{Seção reservada para os resultados consolidados das Baterias A--D executadas na mesma máquina, com figuras e tabelas geradas automaticamente via \texttt{python -m src.cli analyze}.}
+
+\section{Conclusões}
+\label{sec:conclusoes}
+
+\todoLab{Seção reservada para a síntese conclusiva após a consolidação experimental e integração da parte do \textit{Twice-Around-The-Tree}.}
+
+\bibliographystyle{sbc}
+\bibliography{references}
+
+\end{document}
