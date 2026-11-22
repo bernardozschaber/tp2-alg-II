@@ -43,3 +43,35 @@ três princípios metodológicos:
   por árvores de decisão rasas interpretáveis e florestas aleatórias para capturar regras não
   lineares e limiares críticos.
 \end{enumerate}
+
+\paragraph{Verificação automatizada de corretude (testes unitários).}
+Em estudos que envolvem melhorias graduais nos algoritmos, é importante executar testes automatizados antes de iniciar os experimentos. Isso se deve a dois motivos principais. Primeiro, alterações mais significativas no código, como a implementação de limites incrementais $\Theta(1)$, o uso de \textit{bitmasks} para quebra de simetria ou a troca de estruturas de dados, podem introduzir erros que tornam a execução mais rápida, mas comprometem a corretude dos resultados ou a garantia de encontrar a solução ótima. Segundo, como os experimentos com \textit{Branch-and-Bound} podem levar até 30 minutos por instância, identificar problemas no código, na coleta de métricas ou no controle de \textit{timeout} por meio de testes rápidos evita desperdiçar horas de execução. Dessa forma, os testes ajudam a garantir que as diferenças de desempenho apresentadas na Seção 3 sejam realmente resultado das melhorias implementadas no algoritmo.
+
+Como auditoria prévia às baterias experimentais, implementou-se uma suíte automatizada de 29
+testes unitários. Além de validar a camada de infraestrutura (propriedades métricas da base
+\texttt{EUC\_2D}, coleta de \textit{profiling} e \textit{backend} GPU) e o fluxo de análise
+estatística (oráculo DFJ, extração de descritores, regressões e geração de artefatos), a suíte
+certifica diretamente os núcleos algorítmicos em dois blocos:
+\begin{itemize}
+  \item \textbf{Algoritmos aproximados (\texttt{v0}/\texttt{v1}) e \textit{warm-starts}}:
+  verificam-se, em todas as 15 instâncias, a validade dos circuitos hamiltonianos, a igualdade
+  exata do peso da AGM entre \textit{Twice-Around-The-Tree} e Christofides (e do emparelhamento
+  sobre o mesmo conjunto ímpar), os limites estruturais ($c(H) \le 2 \cdot c(T)$ e
+  $c(H) \le c(T) + c(M)$) e o registro de \textit{profiling} por subrotina. Contra o oráculo
+  exato Held--Karp (previamente validado por força bruta), confirmam-se os fatores formais de
+  aproximação ($2$ e $1{,}5$) e a ausência de soluções abaixo do ótimo. Testam-se ainda casos de
+  borda e refatorações críticas: ausência de estouro de recursão na pré-ordem iterativa em
+  árvore-caminho profunda ($N = 2\,500$), consistência sob pesos inteiros arredondados,
+  exatidão da Varredura de Graham (incluindo pontos colineares e duplicados) e equivalência
+  entre a Inserção Mais Barata refatorada em $O(N^2 \log N)$ e sua referência cúbica $O(N^3)$.
+  \item \textbf{\textit{Branch-and-Bound} (\texttt{v0}--\texttt{v3})}: valida-se o valor exato
+  do limite inferior de grau~2 e a otimalidade em grafo inteiro pequeno ($N = 5$), bem como a
+  convergência exata ao mesmo ótimo do oráculo Held--Karp nas quatro versões (em CPU e sob a
+  \textit{flag} GPU) em instâncias da base ($N = 10$ e $N = 12$). Conferem-se também as
+  garantias estruturais das otimizações da pilha limitada a no máximo $N$ nas versões
+  \textit{in-place} (\texttt{v2} e \texttt{v3}) frente à fila global em \texttt{v0}, e redução
+  de nós expandidos de \texttt{v2} para \texttt{v3} pela quebra de simetria. Também pode-se citar a preservação
+  do ótimo e a redução de espaço sob as cinco estratégias de \textit{warm-start}, e o
+  encerramento limpo em \textit{timeout} com estado \texttt{NA}, rota incumbente válida e
+  contadores parciais preservados.
+\end{itemize}
