@@ -170,100 +170,123 @@ def plot_complexity_regression(approx_csv: Path, fits_json: Path, fig_dir: Path)
 
 
 def plot_bnb_ablation(ablation_csv: Path, fig_dir: Path) -> List[Path]:
-    """Figura 3: evolução gradual do Branch-and-Bound (v0 -> v1 -> v2 -> v3) em tempo e memória."""
+    """Figura 3: evolução gradual do Branch-and-Bound (v0 -> v1 -> v2 -> v3) em tempo e memória.
+
+    Usa o Cold Start. Barras hachuradas indicam execuções que pararam no limite de tempo
+    (NA) ou de memória (OOM); nelas o tempo é o instante da parada, não o de resolução.
+    """
     if not ablation_csv.exists():
         return []
-    df = pd.read_csv(ablation_csv)
+    from matplotlib.patches import Patch
+
+    df = pd.read_csv(ablation_csv, keep_default_na=False)
     sub = df[df["warm_start"] == "cold_start"].copy()
     if sub.empty:
         sub = df.copy()
 
+    sub["n"] = pd.to_numeric(sub["n"], errors="coerce")
     sub["time_ms"] = pd.to_numeric(sub["elapsed_until_abort_s"], errors="coerce") * 1000.0
+    sub["max_queue_size"] = pd.to_numeric(sub["max_queue_size"], errors="coerce")
     versions_order = ["v0_naive", "v1_gpu", "v2_dfs_memory", "v3_fast_bound"]
-    present_insts = list(sub.sort_values("n")["instance"].unique())
+    insts = list(sub.sort_values(["n", "instance"])["instance"].drop_duplicates())
+    n_of = sub.drop_duplicates("instance").set_index("instance")["n"]
+    xlabels = [f"{i} ({int(n_of[i])})" for i in insts]
+    timeout_ms = (
+        float(sub.loc[sub["status"] == "NA", "time_ms"].median()) if (sub["status"] == "NA").any() else None
+    )
 
-    fig, axes = plt.subplots(1, 2, figsize=(11.0, 4.3))
-    width = 0.18
-    x = np.arange(len(present_insts))
+    hatch_of = {"OPTIMAL": "", "NA": "///", "OOM": "xxx"}
     colors = ["#b30000", "#e34a33", "#2b8cbe", "#238b45"]
+    fig, axes = plt.subplots(1, 2, figsize=(11.0, 4.6))
+    width = 0.2
+    x = np.arange(len(insts))
 
     for idx, (ver, col) in enumerate(zip(versions_order, colors)):
         v_df = sub[sub["version"] == ver].set_index("instance")
-        vals_t = [float(v_df.loc[i, "time_ms"]) if i in v_df.index else np.nan for i in present_insts]
-        vals_q = [float(v_df.loc[i, "max_queue_size"]) if i in v_df.index else np.nan for i in present_insts]
         offset = (idx - 1.5) * width
-        axes[0].bar(x + offset, vals_t, width=width, label=ver, color=col)
-        axes[1].bar(x + offset, vals_q, width=width, label=ver, color=col)
+        for ax, metric in zip(axes, ["time_ms", "max_queue_size"]):
+            vals = [float(v_df.loc[i, metric]) if i in v_df.index else np.nan for i in insts]
+            hatches = [hatch_of.get(str(v_df.loc[i, "status"]), "") if i in v_df.index else "" for i in insts]
+            bars = ax.bar(x + offset, vals, width=width, color=col, edgecolor="white", linewidth=0.3)
+            for b, h in zip(bars, hatches):
+                b.set_hatch(h)
 
-    axes[0].set_yscale("log")
-    axes[0].set_title("Evolução Gradual B&B: Tempo Real Puro (escala log)")
-    axes[0].set_ylabel("Tempo (ms)")
-    axes[0].set_xticks(x)
-    axes[0].set_xticklabels(present_insts, rotation=25, ha="right")
-    axes[0].legend()
-    axes[0].grid(axis="y", alpha=0.3)
+    axes[0].set_title("Tempo até o término (Cold Start)")
+    axes[0].set_ylabel("Tempo (ms, escala log)")
+    if timeout_ms:
+        axes[0].axhline(timeout_ms, color="#555555", linestyle="--", linewidth=0.8)
+    axes[1].set_title("Pico de nós ativos na fila/pilha")
+    axes[1].set_ylabel("max_queue_size (escala log)")
+    for ax in axes:
+        ax.set_yscale("log")
+        ax.set_xticks(x)
+        ax.set_xticklabels(xlabels, rotation=45, ha="right", fontsize=7)
+        ax.grid(axis="y", alpha=0.3)
 
-    axes[1].set_yscale("log")
-    axes[1].set_title("Pico de Nós Ativos em Memória (max_queue_size, escala log)")
-    axes[1].set_ylabel("Máximo de nós simultâneos na fila/pilha")
-    axes[1].set_xticks(x)
-    axes[1].set_xticklabels(present_insts, rotation=25, ha="right")
-    axes[1].legend()
-    axes[1].grid(axis="y", alpha=0.3)
-
-    fig.tight_layout()
+    handles = [Patch(facecolor=c, label=v) for v, c in zip(versions_order, colors)] + [
+        Patch(facecolor="white", edgecolor="black", hatch="///", label="Limite de tempo (120 s)"),
+        Patch(facecolor="white", edgecolor="black", hatch="xxx", label="Limite de memória (4 GiB)"),
+    ]
+    fig.legend(handles=handles, loc="upper center", ncol=6, frameon=False, fontsize=8)
+    fig.tight_layout(rect=(0, 0, 1, 0.93))
     return _save_fig(fig, "fig3_bnb_gradual_optimization", fig_dir)
 
 
 def plot_warmstart_tradeoff(warmstart_csv: Path, fig_dir: Path) -> List[Path]:
-    """Figura 4: impacto dos 5 warm-starts na expansão de nós e no tempo total do B&B."""
+    """Figura 4: impacto dos 5 warm-starts na expansão de nós do B&B (v3).
+
+    Só entram instâncias em que as cinco estratégias provaram o ótimo; nas demais o
+    número de nós reflete apenas o que coube em 30 minutos e não é comparável.
+    """
     if not warmstart_csv.exists():
         return []
-    df = pd.read_csv(warmstart_csv)
+    df = pd.read_csv(warmstart_csv, keep_default_na=False)
     if df.empty:
         return []
 
     ws_order = ["cold_start", "nearest_neighbor", "twice_around", "christofides", "convex_hull_insertion"]
-    ws_labels = ["Cold Start", "Nearest\nNeighbor", "Twice-\nAround", "Christofides", "Convex Hull\nInsertion"]
+    ws_labels = ["Frio", "Viz. Mais\nPróximo", "Twice-\nAround", "Christofides", "Fecho\nConvexo"]
     colors = ["#636363", "#3182bd", "#756bb1", "#e6550d", "#31a354"]
 
-    # Seleciona instâncias onde ao menos 1 estratégia convergiu ou todas rodaram.
-    inst_order = list(df.sort_values("n")["instance"].unique())[:8]
-    sub = df[df["instance"].isin(inst_order)].copy()
+    df["n"] = pd.to_numeric(df["n"], errors="coerce")
+    df["nodes_expanded"] = pd.to_numeric(df["nodes_expanded"], errors="coerce")
+    ok = df[df["status"] == "OPTIMAL"]
+    counts = ok.groupby("instance")["warm_start"].nunique()
+    solved_all = set(counts[counts == len(ws_order)].index)
+    sub = df[df["instance"].isin(solved_all)]
+    inst_order = list(sub.sort_values(["n", "instance"])["instance"].drop_duplicates())
+    if not inst_order:
+        return []
+    nodes = sub.pivot(index="instance", columns="warm_start", values="nodes_expanded").loc[inst_order]
 
     fig, axes = plt.subplots(1, 2, figsize=(11.2, 4.4))
 
-    # Painel A: redução percentual média de nós expandidos em relação ao cold_start (nas resolvidas)
-    solved = df[df["status"] == "OPTIMAL"].copy()
-    if not solved.empty:
-        cold_map = solved[solved["warm_start"] == "cold_start"].set_index("instance")["nodes_expanded"]
-        reductions = []
-        for ws in ws_order:
-            w_df = solved[solved["warm_start"] == ws].set_index("instance")["nodes_expanded"]
-            common = cold_map.index.intersection(w_df.index)
-            if len(common) > 0:
-                rel = 100.0 * (1.0 - (w_df.loc[common] / np.maximum(cold_map.loc[common], 1.0)))
-                reductions.append(float(rel.mean()))
-            else:
-                reductions.append(0.0)
-        axes[0].bar(ws_labels, reductions, color=colors)
-        axes[0].set_title("Redução Média de Nós Expandidos vs. Cold Start")
-        axes[0].set_ylabel("Redução de nós expandidos (%)")
-        axes[0].axhline(0.0, color="black", linewidth=0.8)
-        axes[0].grid(axis="y", alpha=0.3)
+    # Painel A: redução média de nós expandidos em relação ao Cold Start.
+    reductions = [float((100.0 * (1.0 - nodes[ws] / nodes["cold_start"])).mean()) for ws in ws_order]
+    bars = axes[0].bar(ws_labels, reductions, color=colors)
+    for b, r in zip(bars, reductions):
+        axes[0].annotate(
+            f"{r:.1f}%".replace(".", ","),
+            (b.get_x() + b.get_width() / 2, max(r, 0.0)),
+            ha="center", va="bottom", fontsize=8, xytext=(0, 2), textcoords="offset points",
+        )
+    axes[0].set_title(f"Redução média de nós vs. Frio ({len(inst_order)} instâncias resolvidas)")
+    axes[0].set_ylabel("Redução de nós expandidos (%)")
+    axes[0].axhline(0.0, color="black", linewidth=0.8)
+    axes[0].grid(axis="y", alpha=0.3)
 
-    # Painel B: nós expandidos (escala log) por instância nas 5 estratégias
+    # Painel B: nós expandidos (escala log) por instância nas 5 estratégias.
     x = np.arange(len(inst_order))
-    width = 0.15
+    width = 0.16
     for idx, (ws, lbl, col) in enumerate(zip(ws_order, ws_labels, colors)):
-        w_df = sub[sub["warm_start"] == ws].set_index("instance")
-        vals = [float(w_df.loc[i, "nodes_expanded"]) if i in w_df.index else np.nan for i in inst_order]
-        axes[1].bar(x + (idx - 2) * width, vals, width=width, label=lbl.replace("\n", " "), color=col)
+        axes[1].bar(x + (idx - 2) * width, nodes[ws].to_numpy(), width=width,
+                    label=lbl.replace("-\n", "-").replace("\n", " "), color=col)
+    n_of = sub.drop_duplicates("instance").set_index("instance")["n"]
     axes[1].set_yscale("log")
-    axes[1].set_title("Nós Expandidos na Árvore B&B por Estratégia de Warm-Start")
+    axes[1].set_title("Nós expandidos até provar o ótimo (v3)")
     axes[1].set_ylabel("Nós expandidos (escala log)")
     axes[1].set_xticks(x)
-    axes[1].set_xticklabels(inst_order, rotation=35, ha="right", fontsize=7)
+    axes[1].set_xticklabels([f"{i} ({int(n_of[i])})" for i in inst_order], rotation=35, ha="right", fontsize=7)
     axes[1].legend(fontsize=7)
     axes[1].grid(axis="y", alpha=0.3)
 
@@ -303,9 +326,29 @@ def plot_sensitivity_analysis(sensitivity_json: Path, fig_dir: Path) -> List[Pat
     axes[0].grid(axis="x", alpha=0.3)
 
     # Painéis B e C: geometria espacial de uma instância regular (eil51_n18) vs adversarial (ulysses16)
+    # Os subtítulos vêm dos dados: razão LB da raiz / OPT e tempo do B&B v3 com Cold Start.
+    res_dir = sensitivity_json.parent
+    lb_ratio: Dict[str, float] = {}
+    bnb_s: Dict[str, float] = {}
+    if (res_dir / "merged_instance_metrics.csv").exists():
+        mm = pd.read_csv(res_dir / "merged_instance_metrics.csv")
+        lb_ratio = dict(zip(mm["instance"], mm["lb_root_ratio"]))
+    if (res_dir / "bnb_warmstart.csv").exists():
+        ww = pd.read_csv(res_dir / "bnb_warmstart.csv", keep_default_na=False)
+        ww = ww[(ww["warm_start"] == "cold_start") & (ww["status"] == "OPTIMAL")]
+        bnb_s = dict(zip(ww["instance"], pd.to_numeric(ww["elapsed_s"], errors="coerce")))
+
+    def _subtitle(kind: str, iname: str, n: int) -> str:
+        parts = []
+        if iname in lb_ratio:
+            parts.append(f"LB/OPT = {lb_ratio[iname]:.3f}".replace(".", ","))
+        if iname in bnb_s:
+            parts.append(f"B&B frio {bnb_s[iname]:.1f} s".replace(".", ","))
+        return f"{kind}: {iname} (N={n})\n" + " · ".join(parts)
+
     for ax, iname, subtitle in [
-        (axes[1], "eil51_n18", "Regular: eil51_n18 (N=18)\nLB/OPT=0.909 -> B&B 0.36s"),
-        (axes[2], "ulysses16", "Adversarial: ulysses16 (N=16)\nLB/OPT=0.662 -> Clusters + Outlier"),
+        (axes[1], "eil51_n18", _subtitle("Regular", "eil51_n18", 18)),
+        (axes[2], "ulysses16", _subtitle("Adversarial", "ulysses16", 16)),
     ]:
         inst = load_tsplib_instance(iname)
         ax.scatter(inst.coords[:, 0], inst.coords[:, 1], s=32, color="#1f78b4", edgecolors="black", linewidth=0.5)
