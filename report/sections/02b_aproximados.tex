@@ -1,0 +1,232 @@
+\subsection{Algoritmos de Aproximação com Garantia Formal}
+\label{sec:aproximados}
+
+Antes de abordar a busca exata, examinamos os dois algoritmos polinomiais com garantia formal
+de fator de aproximação no espaço métrico. Além de constituírem objetos diretos da análise de
+complexidade empírica, ambos serão empregados na Seção~\ref{sec:warm_starts} como estratégias
+de inicialização para restringir a árvore do \textit{Branch-and-Bound}.
+
+\subsubsection{Algoritmo Twice-Around-The-Tree (\texttt{v0} \texorpdfstring{$\rightarrow$}{->} \texttt{v1})}
+\label{sec:twice_around}
+
+O algoritmo \textit{Twice-Around-The-Tree} \cite{rosenkrantz1977analysis}
+constrói um circuito hamiltoniano com garantia formal de $2$-aproximação para qualquer
+instância métrica do TSP por meio de quatro passos encadeados: (1) computar uma Árvore Geradora
+Mínima (AGM) $T$ sobre o grafo completo $G$; (2) duplicar cada uma das $N - 1$ arestas de $T$
+para formar um multigrafo conexo $2T$ no qual todos os vértices passam a ter grau par; (3)
+extrair um circuito euleriano fechado sobre $2T$ a partir de um vértice raiz, atravessando cada
+aresta da árvore duas vezes; e (4) percorrer esse passeio eliminando visitas repetidas a
+vértices já alcançados (\textit{shortcutting}) por meio da desigualdade triangular assegurada no TSP euclidiano, retornando à raiz. A garantia formal
+decorre diretamente dessas etapas: remover uma aresta qualquer do circuito ótimo $H^*$ produz
+uma árvore geradora, assegurando $c(T) \le c(H^*) = OPT$; o circuito euleriano em $2T$ tem
+custo exato $2 \cdot c(T)$; e cada atalho no passo final substitui um subcaminho por uma aresta
+direta que, pela desigualdade triangular do espaço euclidiano, nunca aumenta o comprimento
+total, garantindo $OPT \le c(H) \le 2 \cdot c(T) \le 2 \cdot OPT$.
+
+\paragraph{Diagnóstico da implementação inicial (\texttt{v0\_naive}).}
+A implementação que segue exatamente esses quatro passos introduz situações de ineficiência atreladas ao tempo de execução e ao consumo de memória.
+Primeiro, instancia-se explicitamente o grafo completo $G$ em dicionários de adjacência
+dinâmicos armazenando todas as $\binom{N}{2} = N(N-1)/2$ arestas e seus atributos de peso,
+alocando $\Theta(N^2)$ objetos em memória. Após isso, a
+extração da AGM recorre ao algoritmo de Kruskal genérico sobre a lista completa de arestas,
+impondo ordenação em tempo $O(|E| \log |E|) = O(N^2 \log N)$. Ademais, os passos (2) e (3)
+materializam um multigrafo dinâmico explícito com $2(N - 1)$ arestas para obter o passeio
+euleriano completo de comprimento $2N - 1$, apenas para descartar metade das visitas no passo
+(4) por meio de uma hash table na etapa de \textit{shortcutting}. Embora essa última
+etapa permaneça linear em $N$, a alocação redundante do multigrafo e do passeio duplicado
+adiciona sobrecarga expressiva em relação ao custo de percorrer diretamente a
+árvore.
+
+\paragraph{Refatoração gradual para a versão otimizada (\texttt{v1\_optimized}).}
+Para remover as sobrecargas identificadas na versão inicial e isolar a complexidade atrelada
+ao algoritmo, reestruturamos a implementação em três decisões coordenadas:
+
+\begin{enumerate}
+  \item \textbf{Eliminação de bibliotecas de grafos e compartilhamento do Prim denso
+  ($\Theta(N^2)$)}: Diferentemente de Christofides (Seção~\ref{sec:christofides}) que
+  ainda depende da biblioteca externa de suporte para o algoritmo Blossom, a versão otimizada
+  do \textit{Twice-Around-The-Tree} elimina integralmente representações dinâmicas de grafos, operando diretamente sobre a matriz
+  simétrica contígua de distâncias $N \times N$ e zerando o custo de instanciação do grafo
+  completo. A AGM é computada pela mesma formulação densa do algoritmo de Prim sem fila de
+  prioridades (detalhada na Seção~\ref{sec:christofides}), isolada em um módulo compartilhado
+  de primitivas comuns para evitar o acoplamento desnecessário entre os algoritmos aproximados e
+  garantir igualdade exata da AGM nas medições comparativas. Essa substituição reduz a extração
+  da AGM de $O(N^2 \log N)$ (Kruskal) para $\Theta(N^2)$ em tempo e $\Theta(N)$ em
+  espaço, registrando simultaneamente o vetor de graus da árvore.
+
+  \item \textbf{Colapso dos passos (2)--(4) por equivalência com a pré-ordem sobre $T$}: Em
+  vez de construir o multigrafo $2T$, extrair um circuito euleriano de $2(N - 1)$ arestas e
+  filtrar duplicatas através da hash table, exploramos a equivalência estrutural clássica do
+  algoritmo \cite{cormen2009clrs}: a sequência de primeiras visitas de um passeio euleriano
+  sobre a árvore duplicada coincide exatamente com uma travessia em pré-ordem (busca em
+  profundidade) executada diretamente sobre a AGM $T$. Com isso, suprimem-se integralmente as
+  alocações do multigrafo, do passeio dobrado e da etapa separada de \textit{shortcutting}.
+
+  \item \textbf{Busca em profundidade iterativa em $\Theta(N)$ preservando a ordem natural do
+  Prim}: A AGM $T$ é representada por listas de adjacência compactas contendo exatamente
+  $2(N - 1)$ inteiros, combinadas com um vetor booleano de visitação de tamanho $N$ e uma pilha
+  explícita (prevenindo estouro de pilha de recursão em árvores degeneradas de grande
+  profundidade). Ao expandir um vértice $u$, seus vizinhos ainda não visitados são empilhados
+  em ordem reversa para compensar a política LIFO da pilha e preservar exatamente a ordem
+  natural de descoberta das arestas geradas pelo Prim. Optou-se por não ordenar
+  os vizinhos por peso de aresta antes da travessia: além de elevar o custo teórico dessa
+  subrotina para $O(N \log N)$ no pior caso (em árvores com nós de grau elevado), essa ordenação
+  local não garante redução do circuito final, uma vez que o atalho entre a última
+  folha de uma subárvore e a raiz da subárvore seguinte depende da geometria global da árvore e não apenas
+  dos pesos incidentes ao vértice pai. Mantendo a ordem natural da árvore, a etapa de pré-ordem
+  permanece estritamente $\Theta(N)$ em tempo e espaço.
+\end{enumerate}
+
+\paragraph{Análise de viabilidade de aceleração em GPU (CPU versus GPU).}
+Diferentemente da busca exata via \textit{Branch-and-Bound} (Seção~\ref{sec:bnb_otimizacoes}), na qual a explosão combinatória gera elevadas possibilidades de estados passíveis de
+avaliação em lote na GPU (Seção~\ref{sec:bnb_versoes}), analisou-se a viabilidade de
+acelerar o \textit{Twice-Around-The-Tree} em GPU e optou-se por manter suas duas versões
+exclusivamente em CPU (restringindo o uso opcional de GPU ao pré-cálculo da matriz euclidiana
+no carregamento da instância). Essa decisão apoia-se no comportamento de hardware de suas duas
+etapas na faixa experimental adotada ($N \in [10, 70]$). Na extração da AGM, o algoritmo de
+Prim denso exige $N$ iterações sequenciais dependentes entre si; executá-lo em GPU dispararia
+múltiplos \textit{kernels} por iteração sobre vetores curtos, fazendo a latência de lançamento e sincronização superar amplamente o
+processamento vetorizado em CPU. Mesmo substituindo Prim por uma formulação paralelizável como o algoritmo de Bor\r{u}vka que reduz a profundidade sequencial para no
+máximo $\lceil \log_2 N \rceil \le 7$ rodadas de contração sobre a matriz completa, toda a
+matriz em precisão dupla residiria integralmente na
+memória cache L1 da CPU; nessa escala, o custo de transferência via barramento PCIe e de
+disparo de \textit{kernels} seria elevado, de modo que a GPU só tenderia a compensar em
+instâncias de milhares de vértices. Por fim, a travessia em pré-ordem em $\Theta(N)$ é
+fortemente sequencial e envolve apenas algumas dezenas de operações de pilha, não
+justificando a sobrecarga de técnicas paralelas de ordenação em lista.
+
+\paragraph{Hipóteses teóricas pré-experimentais ($H_{TA}$).}
+A partir da análise estrutural e das refatorações descritas acima, formulamos três expectativas
+a serem avaliadas na Seção~\ref{sec:experimentos}: (i) a migração de \texttt{v0\_naive} para
+\texttt{v1\_optimized} deve reduzir drasticamente tanto o tempo de execução quanto o pico de
+memória auxiliar, convertendo a alocação quadrática $\Theta(N^2)$ de grafos dinâmicos e
+multigrafo em consumo linear $\Theta(N)$; (ii) na versão otimizada, os tempos coletados por
+subrotina devem ajustar-se estreitamente aos modelos teóricos $\Theta(N^2)$ para o Prim denso e
+$\Theta(N)$ para a travessia em pré-ordem iterativa, com a extração da AGM concentrando quase
+todo o tempo total; e (iii) em comparação ao algoritmo de Christofides
+(Seção~\ref{sec:christofides}), o \textit{Twice-Around-The-Tree} deve escalar de forma
+substancialmente mais rápida por dispensar o emparelhamento $O(|I|^3)$, porém apresentando erro
+relativo sistematicamente superior em relação ao ótimo, em particular em instâncias com
+vértices de grau elevado na AGM, nas quais o retorno por ramos gera atalhos mais longos.
+
+\subsubsection{Algoritmo de Christofides (\texttt{v0} \texorpdfstring{$\rightarrow$}{->} \texttt{v1})}
+\label{sec:christofides}
+
+O algoritmo de Christofides \cite{christofides1976worst} constrói um circuito hamiltoniano de
+custo garantidamente limitado a $1{,}5$ vezes o ótimo em qualquer grafo métrico por meio de
+quatro estágios encadeados: (1) computar uma Árvore Geradora Mínima (AGM) $T$ sobre o grafo
+completo $G$; (2) coletar o conjunto $I \subseteq V$ dos vértices que possuem grau ímpar em
+$T$ (cuja cardinalidade $|I|$ é sempre par, pois a soma dos graus de qualquer grafo é o dobro
+do número de arestas) e determinar um emparelhamento perfeito de peso mínimo $M$ no subgrafo
+completo induzido por $I$ por meio do algoritmo Blossom de Edmonds \cite{edmonds1965paths};
+(3) unir as arestas de $T$ e $M$ formando um multigrafo conexo $G' = (V, E(T) \uplus E(M))$ no
+qual todo vértice passa a ter grau par, possibilitando extrair um circuito euleriano que
+percorre todas as arestas; e (4) percorrer esse circuito eliminando visitas repetidas a
+vértices já alcançados (\textit{shortcutting}), operação que não aumenta o custo total graças à
+desigualdade triangular.
+
+\paragraph{Diagnóstico da implementação inicial (\texttt{v0\_naive}).}
+Uma tradução ingênua direta desses quatro passos como definido no material da disciplina 
+sobre bibliotecas genéricas de grafos introduz três
+fontes de ineficiência que distorcem tanto o consumo de memória quanto o comportamento
+assintótico das subrotinas auxiliares. Primeiro, a versão inicial constrói explicitamente um
+grafo completo em memória utilizando dicionários de adjacência dinâmicos contendo todas as
+$\binom{N}{2} = N(N-1)/2$ arestas. Em grafos esparsos, listas ou dicionários de adjacência são
+vantajosos por armazenarem apenas arestas presentes; em um grafo euclidiano completo, porém,
+cada vértice conecta-se a todos os demais, de modo que tabelas de dispersão e objetos de
+atributos por aresta consomem $\Theta(N^2)$ memória com uma constante multiplicativa elevada e
+alto custo de alocação. Segundo, a extração da AGM recorre ao algoritmo de Kruskal genérico,
+que precisa extrair e ordenar todas as $|E| = \Theta(N^2)$ arestas do grafo completo em tempo
+$O(|E| \log |E|) = O(N^2 \log N)$. Terceiro, o multigrafo $T \uplus M$ é novamente materializado
+em uma estrutura dinâmica de alto nível para obter o circuito euleriano, repetindo alocações
+desnecessárias sobre um grafo que possui menos de $1{,}5N$ arestas.
+
+\paragraph{Refatoração gradual para a versão otimizada (\texttt{v1\_optimized}).}
+Para eliminar essas sobrecargas e isolar o custo intrínseco de cada etapa teórica, redesenhamos
+a arquitetura em quatro decisões coordenadas:
+
+\begin{enumerate}
+  \item \textbf{Operação direta sobre matriz de distâncias contígua}: Eliminamos completamente
+  a instanciação do grafo completo em estruturas dinâmicas. Todas as consultas de distância
+  $c(u, v)$ passam a indexar diretamente a matriz simétrica contígua $N \times N$ pré-computada
+  para a instância, reduzindo a localidade de acesso a operações sobre arranjos planos em memória
+  e zerando a etapa de construção do grafo.
+
+  \item \textbf{Árvore Geradora Mínima via Prim denso sem fila de prioridades ($\Theta(N^2)$)}:
+  Em vez de ordenar todas as $\binom{N}{2}$ arestas como em Kruskal ou manter uma fila de
+  prioridades binária (cujo custo $O(|E| \log N)$ também degenera para $O(N^2 \log N)$ em grafos
+  completos), implementamos o algoritmo de Prim em sua formulação densa (compartilhada também
+  pelo \textit{Twice-Around-The-Tree}). O procedimento mantém quatro vetores unidimensionais de
+  tamanho $N$: um indicador booleano de pertencimento à árvore, o vetor \texttt{chave}$[v]$ com
+  a menor distância conhecida de cada vértice $v$ até a árvore atual (inicializado com $+\infty$,
+  exceto a raiz com $0$), o vetor de predecessores e um vetor de graus na AGM. A cada uma das
+  $N$ iterações, o algoritmo varre linearmente o vetor \texttt{chave} em $\Theta(N)$ para
+  selecionar o vértice fora da árvore de menor distância $u$; em seguida, marca $u$ como
+  integrado à árvore, atribui \texttt{chave}$[u] \leftarrow +\infty$ no próprio vetor e percorre
+  a linha $u$ da matriz de distâncias em $\Theta(N)$ atualizando \texttt{chave}$[v]$ para os
+  vértices ainda externos sempre que $c(u, v) < \texttt{chave}[v]$.
+
+  Duas escolhas de engenharia merecem destaque nessa estrutura. A marcação de
+  \texttt{chave}$[u] = +\infty$ \textit{in-place} garante que vértices já incorporados nunca
+  voltem a ser selecionados como mínimos nas iterações futuras, dispensando a criação de
+  máscaras booleanas temporárias a cada busca de mínimo. Além disso, sempre que uma aresta
+  $(\text{pai}[u], u)$ é confirmada na árvore, incrementam-se imediatamente os graus de ambas as
+  extremidades, de modo que o conjunto de vértices ímpares $I$ já sai pronto ao término da AGM
+  em uma única varredura linear. Como são executadas exatamente $N$ iterações e cada iteração
+  realiza uma busca linear $\Theta(N)$ e uma relaxação linear $\Theta(N)$, o tempo é
+  estritamente $\Theta(N^2)$ e o espaço estritamente $\Theta(N)$, removendo o fator
+  logarítmico de Kruskal e da variante com \textit{heap}.
+
+  \item \textbf{Restrição do algoritmo Blossom ao subgrafo reduzido de vértices ímpares}:
+  A biblioteca externa de grafos só é acionada para construir o subgrafo completo induzido pelos
+  $|I|$ vértices de grau ímpar e executar o algoritmo Blossom de Edmonds, garantindo
+  emparelhamento perfeito mínimo sem instanciar os demais $N - |I|$ vértices pares. Do ponto de
+  vista analítico, essa distinção é crucial: a complexidade teórica do algoritmo Blossom é
+  $O(|I|^3)$ em tempo e $\Theta(|I|^2)$ em espaço, e não simplesmente uma função homogênea de
+  $N$. Para compreender a intuição desse fenômeno, considere duas instâncias com o mesmo número
+  total de vértices $N$: se a AGM da primeira tiver formato próximo a um caminho, apenas suas
+  duas extremidades terão grau ímpar ($|I| = 2$), tornando o emparelhamento instantâneo; se a
+  AGM da segunda apresentar muitas ramificações e folhas (como ocorre em aglomerados ou árvores
+  muito estreladas), $|I|$ pode aproximar-se de $N$, elevando drasticamente o esforço do
+  Blossom. Logo, o tamanho real $|I|$ do subgrafo ímpar é o parâmetro estrutural que governa o
+  custo dessa etapa.
+
+  \item \textbf{Circuito euleriano iterativo via Hierholzer em $\Theta(N)$}:
+  Como a AGM contém exatamente $N - 1$ arestas e o emparelhamento $M$ contém $|I|/2 \le N/2$
+  arestas, o multigrafo euleriano $G' = (V, E(T) \uplus E(M))$ é sempre esparso, somando
+  $|E'| < 1{,}5N = \Theta(N)$ arestas. Representamos $G'$ por listas de adjacência compactas
+  nas quais cada aresta inserida recebe um identificador inteiro único de $0$ a $|E'| - 1$,
+  acompanhado de um vetor booleano de arestas já consumidas e de um ponteiro de leitura
+  monotônico \texttt{ptr}$[u]$ para cada vértice $u$. Atribuir identificadores individuais
+  resolve de maneira simples a presença de arestas paralelas (caso uma aresta escolhida em $M$
+  coincida com uma aresta já presente em $T$): cada cópia possui seu próprio identificador e é
+  marcada independentemente em $\Theta(1)$, sem jamais exigir remoções em meio a listas. O
+  algoritmo de Hierholzer avança iterativamente sobre uma pilha explícita (eliminando o risco de
+  estouro de pilha de recursão): a partir do vértice no topo $u$, avança \texttt{ptr}$[u]$
+  ignorando arestas já marcadas até encontrar uma aresta livre, marca-a e empilha o vizinho;
+  quando \texttt{ptr}$[u]$ atinge o final da lista de $u$, desempilha $u$ adicionando-o ao
+  circuito euleriano. Como cada entrada de adjacência de $G'$ é inspecionada exatamente uma vez
+  pelo ponteiro monotônico ao longo de toda a execução e existem $2|E'| < 3N$ entradas no
+  total, tanto o tempo quanto o espaço dessa etapa são estritamente $\Theta(N)$.
+\end{enumerate}
+
+\paragraph{Observação de auditoria sobre empates na AGM.}
+Durante a verificação formal entre as versões \texttt{v0\_naive} e \texttt{v1\_optimized},
+convém notar que em instâncias geométricas com coordenadas em grade regular (como recortes de
+\texttt{eil51}), pares distintos de vértices podem apresentar exatamente a mesma distância
+euclidiana. Nesses empates exatos, Kruskal e Prim podem selecionar árvores geradoras mínimas
+estruturalmente diferentes de mesmo peso total ótimo. Como a mudança de uma única aresta altera
+a paridade dos graus de suas extremidades, o conjunto de vértices ímpares $I$ e o ciclo final
+obtido após o emparelhamento podem diferir entre as duas versões, mantendo ambas perfeitamente
+válidas e sujeitas à mesma garantia formal de $1{,}5$-aproximação.
+
+\paragraph{Hipóteses teóricas pré-experimentais ($H_C$).}
+A partir da análise estrutural acima, formulamos três expectativas abstratas a serem validadas
+na Seção~\ref{sec:experimentos}: (i) a migração de \texttt{v0\_naive} para
+\texttt{v1\_optimized} deve reduzir substancialmente o pico de memória ao eliminar a alocação
+quadrática do grafo completo em dicionários; (ii) os tempos medidos de Prim denso e de
+Hierholzer devem ajustar-se estreitamente às curvas teóricas $\Theta(N^2)$ e $\Theta(N)$,
+respectivamente; e (iii) o emparelhamento Blossom deve concentrar a fração dominante do tempo
+total na versão otimizada, apresentando aderência estatística superior quando modelado como
+função cúbica de $|I|^3$ (e quadrática em $|I|^2$ para a memória) em comparação ao ajuste
+grosseiro em função de $N^3$.

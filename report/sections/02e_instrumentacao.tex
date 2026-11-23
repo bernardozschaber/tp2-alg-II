@@ -1,0 +1,77 @@
+\subsection{Protocolo de Instrumentação, Isolamento e Metodologia Analítica}
+\label{sec:instrumentacao}
+
+Para assegurar que os tempos e picos de memória medidos reflitam o comportamento algorítmico
+real e não artefatos do ambiente de medição, a camada de instrumentação foi desenhada segundo
+três princípios metodológicos:
+
+\begin{enumerate}
+  \item \textbf{Separação estrita entre passadas de tempo puro e de rastreamento de memória}:
+  Rastreadores finos de alocação de memória em nível de interpretador interceptam cada objeto
+  criado e destruído durante a execução. Em algoritmos recursivos que alocam e liberam
+  estruturas milhões de vezes por segundo, manter esse rastreamento ativo durante as medições
+  temporais introduz um severo \emph{efeito observador}, inflando artificialmente o tempo de
+  execução e antecipando de forma espúria o limite de 30 minutos. Por isso, todas as medições
+  oficiais de tempo executam com rastreamento fino de alocações desativado (utilizando relógio
+  monotônico de alta resolução em nanossegundos e tomando a mediana de múltiplas repetições nos
+  algoritmos polinomiais para filtrar oscilações do escalonador do sistema operacional). O pico
+  relativo de memória por subrotina é coletado em uma passada dedicada e isolada.
+
+  \item \textbf{Isolamento em subprocessos, memória física do sistema e captura limpa de OOM}:
+  Cada caso experimental do \textit{Branch-and-Bound} é disparado em um subprocesso
+  independente do sistema operacional. Esse isolamento oferece três garantias essenciais:
+  (i) permite consultar diretamente o pico máximo de memória física residente (\textit{Maximum
+  Resident Set Size}, Max RSS) reportado pelo núcleo do sistema operacional sem impor qualquer
+  sobrecarga de CPU à busca; (ii) impede que fragmentação de memória ou ciclos pendentes do
+  coletor de lixo de uma instância contaminem a medição da instância seguinte; e (iii) possibilita
+  impor um teto explícito de memória virtual nas execuções em CPU. Quando uma versão baseada em
+  fila global atinge esse teto, a exceção de memória é capturada de forma controlada, a fila é
+  esvaziada para recuperar espaço operacional e o caso é registrado com estado \texttt{OOM},
+  preservando o tamanho exato da fronteira e o total de nós expandidos no instante do colapso.
+  Todos os resultados são persistidos imediatamente em disco de maneira atômica para permitir
+  retomada segura de baterias longas.
+
+  \item \textbf{Modelagem estatística de complexidade e sensibilidade topológica}:
+  Na fase analítica (Seção~\ref{sec:experimentos}), as séries temporais e espaciais obtidas por
+  subrotina são ajustadas às curvas teóricas previstas por regressão não linear por mínimos
+  quadrados, avaliando a aderência pelo coeficiente de determinação $R^2$ e pela raiz do erro
+  quadrático médio (RMSE). Para investigar a sensibilidade topológica das aproximações e do
+  limite inferior da busca exata, extraímos oito descritores geométricos e estruturais da AGM
+  por instância, modelando sua influência por regressão linear múltipla padronizada com
+  regularização L2 (regressão \textit{Ridge} com validação cruzada \textit{Leave-One-Out},
+  adequada à presença de colinearidade entre descritores em $n = 15$ instâncias), complementada
+  por árvores de decisão rasas interpretáveis e florestas aleatórias para capturar regras não
+  lineares e limiares críticos.
+\end{enumerate}
+
+\paragraph{Verificação automatizada de corretude (testes unitários).}
+Em estudos que envolvem melhorias graduais nos algoritmos, é importante executar testes automatizados antes de iniciar os experimentos. Isso se deve a dois motivos principais. Primeiro, alterações mais significativas no código, como a implementação de limites incrementais $\Theta(1)$, o uso de \textit{bitmasks} para quebra de simetria ou a troca de estruturas de dados, podem introduzir erros que tornam a execução mais rápida, mas comprometem a corretude dos resultados ou a garantia de encontrar a solução ótima. Segundo, como os experimentos com \textit{Branch-and-Bound} podem levar até 30 minutos por instância, identificar problemas no código, na coleta de métricas ou no controle de \textit{timeout} por meio de testes rápidos evita desperdiçar horas de execução. Dessa forma, os testes ajudam a garantir que as diferenças de desempenho apresentadas na Seção 3 sejam realmente resultado das melhorias implementadas no algoritmo.
+
+Como auditoria prévia às baterias experimentais, implementou-se uma suíte automatizada de 29
+testes unitários. Além de validar a camada de infraestrutura (propriedades métricas da base
+\texttt{EUC\_2D}, coleta de \textit{profiling} e \textit{backend} GPU) e o fluxo de análise
+estatística (oráculo DFJ, extração de descritores, regressões e geração de artefatos), a suíte
+certifica diretamente os núcleos algorítmicos em dois blocos:
+\begin{itemize}
+  \item \textbf{Algoritmos aproximados (\texttt{v0}/\texttt{v1}) e \textit{warm-starts}}:
+  verificam-se, em todas as 15 instâncias, a validade dos circuitos hamiltonianos, a igualdade
+  exata do peso da AGM entre \textit{Twice-Around-The-Tree} e Christofides (e do emparelhamento
+  sobre o mesmo conjunto ímpar), os limites estruturais ($c(H) \le 2 \cdot c(T)$ e
+  $c(H) \le c(T) + c(M)$) e o registro de \textit{profiling} por subrotina. Contra o oráculo
+  exato Held--Karp (previamente validado por força bruta), confirmam-se os fatores formais de
+  aproximação ($2$ e $1{,}5$) e a ausência de soluções abaixo do ótimo. Testam-se ainda casos de
+  borda e refatorações críticas: ausência de estouro de recursão na pré-ordem iterativa em
+  árvore-caminho profunda ($N = 2\,500$), consistência sob pesos inteiros arredondados,
+  exatidão da Varredura de Graham (incluindo pontos colineares e duplicados) e equivalência
+  entre a Inserção Mais Barata refatorada em $O(N^2 \log N)$ e sua referência cúbica $O(N^3)$.
+  \item \textbf{\textit{Branch-and-Bound} (\texttt{v0}--\texttt{v3})}: valida-se o valor exato
+  do limite inferior de grau~2 e a otimalidade em grafo inteiro pequeno ($N = 5$), bem como a
+  convergência exata ao mesmo ótimo do oráculo Held--Karp nas quatro versões (em CPU e sob a
+  \textit{flag} GPU) em instâncias da base ($N = 10$ e $N = 12$). Conferem-se também as
+  garantias estruturais das otimizações da pilha limitada a no máximo $N$ nas versões
+  \textit{in-place} (\texttt{v2} e \texttt{v3}) frente à fila global em \texttt{v0}, e redução
+  de nós expandidos de \texttt{v2} para \texttt{v3} pela quebra de simetria. Também pode-se citar a preservação
+  do ótimo e a redução de espaço sob as cinco estratégias de \textit{warm-start}, e o
+  encerramento limpo em \textit{timeout} com estado \texttt{NA}, rota incumbente válida e
+  contadores parciais preservados.
+\end{itemize}

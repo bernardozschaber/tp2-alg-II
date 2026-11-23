@@ -8,3 +8,13 @@ data/results/raw/
 *-output*.tar
 *:Zone.Identifier
 logs*.md
+
+# Artefatos temporários de compilação LaTeX do relatório principal
+report/main.aux
+report/main.bbl
+report/main.blg
+report/main.log
+report/main.out
+report/main.toc
+report/main.pdf
+report/missfont.log

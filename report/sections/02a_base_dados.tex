@@ -1,0 +1,77 @@
+\section{Implementação, Profiling e Auditoria}
+\label{sec:implementacao}
+
+O sistema experimental foi implementado em Python~3 sob uma arquitetura modular que separa o
+carregamento de instâncias, os núcleos algorítmicos, o orquestrador de experimentos e os
+módulos de análise estatística. As estruturas numéricas densas apoiam-se em arranjos contíguos
+em memória de precisão dupla, reservando o uso de bibliotecas de grafos estritamente à etapa de
+emparelhamento perfeito de peso mínimo (algoritmo Blossom) e oferecendo suporte opcional a
+processamento paralelo em GPU via CUDA para as versões vetorizadas da busca exata. O
+desenvolvimento contou com apoio controlado de ferramentas de inteligência artificial generativa
+para prototipação, auditoria e revisão; o registro consolidado de prompts do grupo encontra-se
+documentado separadamente no repositório do projeto.
+
+\subsection{Construção e Auditoria da Base de Instâncias (\texttt{EUC\_2D})}
+\label{sec:base_dados}
+
+Para que a comparação entre heurísticas geométricas (como a inserção a partir do fecho convexo),
+algoritmos métricos e busca exata fosse matematicamente consistente, o conjunto de instâncias
+extraído da biblioteca clássica TSPLIB95 \cite{reinelt1991tsplib} passou por quatro decisões
+metodológicas e verificações de integridade:
+
+\begin{enumerate}
+  \item \textbf{Uso estrito de coordenadas bidimensionais nativas}: Uma inspeção direta dos
+  arquivos oficiais da TSPLIB95 constatou que diversas instâncias pequenas sugeridas
+  no enunciado do projeto (como \texttt{gr24}, \texttt{fri26} e \texttt{swiss42}) fornecem apenas matrizes
+  explícitas de distâncias entre cidades, sem coordenadas cartesianas $(x, y)$ associadas.
+  Projetar essas matrizes no plano por técnicas de imersão multidimensional introduziria
+  distorções métricas e posições artificiais, comprometendo tanto o cálculo da envoltória
+  convexa quanto as métricas de distribuição espacial. Por essa razão, descartamos qualquer
+  instância sem coordenadas bidimensionais nativas. Também removemos \texttt{dantzig42}
+  ($N = 42$) por situar-se fora dos limites adotados para a divisão de escalas entre a faixa
+  principal ($N \le 40$) e a faixa de estresse ($N \in [45, 75]$) definidas no escopo do trabalho.
+
+  \item \textbf{Balanceamento em 15 instâncias (80\% faixa principal e 20\% faixa de estresse)}:
+  Incluímos integralmente todas as instâncias oficiais da TSPLIB95 com coordenadas 2D nativas
+  na faixa $N \le 40$ (\texttt{burma14}, \texttt{ulysses16}, \texttt{ulysses22} e
+  \texttt{bays29}, esta última a partir de sua seção oficial de coordenadas de exibição), com
+  verificação byte a byte em relação aos arquivos originais. Para preencher de maneira regular
+  o intervalo $N \in [10, 40]$ necessário às regressões de complexidade, construímos recortes
+  prefixados determinísticos (os $k$ primeiros pontos nativos) das instâncias euclidianas
+  clássicas \texttt{eil51}, \texttt{berlin52} e \texttt{st70}. Essa composição resulta em
+  exatamente 12 instâncias ($80\%$) na faixa principal (\texttt{eil51\_n10},
+  \texttt{berlin52\_n12}, \texttt{burma14}, \texttt{ulysses16}, \texttt{eil51\_n18},
+  \texttt{berlin52\_n20}, \texttt{ulysses22}, \texttt{eil51\_n25}, \texttt{bays29},
+  \texttt{berlin52\_n33}, \texttt{eil51\_n38} e \texttt{st70\_n40}) e 3 instâncias completas
+  ($20\%$) na faixa de estresse (\texttt{att48}, \texttt{berlin52} e \texttt{st70}), cobrindo o
+  intervalo $N \in [10, 70]$.
+
+  \item \textbf{Distância euclidiana contínua versus arredondamento inteiro}: Na especificação
+  histórica da TSPLIB, pesos \texttt{EUC\_2D} costumam ser arredondados para o inteiro mais
+  próximo. Todavia, instâncias como \texttt{burma14}, \texttt{ulysses16} e \texttt{ulysses22}
+  expressam suas coordenadas nativas em graus decimais, produzindo distâncias euclidianas muito
+  pequenas entre pontos próximos (frequentemente inferiores a uma unidade). Aplicar
+  arredondamento inteiro sobre essas coordenadas colapsaria arestas curtas para custo zero e
+  criaria dezenas de empates artificiais, descaracterizando a geometria do grafo. Optou-se,
+  portanto, por avaliar $c(u, v) = \sqrt{(x_u - x_v)^2 + (y_u - y_v)^2}$ de forma contínua em
+  precisão dupla (\texttt{float64}), mantendo o modo inteiro apenas como opção parametrizável
+  para testes controlados de grafos com pesos discretos.
+
+  \item \textbf{Certificação de um gabarito ótimo estritamente \texttt{EUC\_2D}}: Ao auditar
+  os arquivos de rotas ótimas distribuídos com a TSPLIB, detectou-se uma incompatibilidade
+  métrica relevante. Como \texttt{bays29} teve sua rota oficial calculada originalmente sobre
+  uma matriz rodoviária explícita, essa rota não é necessariamente ótima sob a distância
+  euclidiana reta entre suas coordenadas; situação análoga ocorre em \texttt{ulysses16} e
+  \texttt{ulysses22} (originalmente definidos sob métrica geográfica esférica) e em recortes
+  prefixados que não possuem arquivo oficial. Caso tais rotas fossem usadas como referência de
+  ótimo, heurísticas euclidianas poderiam obter custos inferiores ao suposto ótimo, gerando
+  erros relativos negativos sem significado matemático. Para garantir rigor na medição da
+  qualidade das aproximações e na análise de sensibilidade (inclusive para instâncias em que o
+  \textit{Branch-and-Bound} atinge o limite de tempo), construímos um oráculo estático 
+  baseado na formulação linear inteira de Dantzig--Fulkerson--Johnson \cite{dantzig1954solution}
+  com inserção iterativa de desigualdades de eliminação de subciclos
+  ($\sum_{i, j \in S} x_{ij} \le |S| - 1$ para todo subconjunto desconexo $S \subsetneq V$).
+  Esse procedimento certifica o valor ótimo exato contínuo $OPT$ de todas as 15 instâncias e
+  atua exclusivamente como gabarito estático para o cálculo do erro percentual, nunca
+  substituindo o \textit{Branch-and-Bound} na avaliação do algoritmo exato.
+\end{enumerate}
