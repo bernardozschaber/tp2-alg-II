@@ -322,36 +322,81 @@ def plot_gpu_validation(gpu_csv: Path, fig_dir: Path) -> List[Path]:
     """Figura 6: comparação direta CPU vs GPU (`--use-gpu`) no Branch-and-Bound."""
     if not gpu_csv.exists():
         return []
-    df = pd.read_csv(gpu_csv)
+    # keep_default_na=False: o status "NA" (timeout) não pode virar NaN.
+    df = pd.read_csv(gpu_csv, keep_default_na=False)
     if df.empty:
         return []
 
-    df["time_ms"] = pd.to_numeric(df["elapsed_until_abort_s"], errors="coerce") * 1000.0
-    labels = [f"{r['instance']}\n{r['version']} (B={int(r.get('batch_size', 128))})" for _, r in df.drop_duplicates(["instance", "version", "batch_size"]).iterrows()]
-    keys = list(df.drop_duplicates(["instance", "version", "batch_size"])[["instance", "version", "batch_size"]].itertuples(index=False, name=None))
+    from matplotlib.patches import Patch
 
-    cpu_vals = []
-    gpu_vals = []
-    for inst_n, ver, bs in keys:
-        c = df[(df["instance"] == inst_n) & (df["version"] == ver) & (df["batch_size"] == bs) & (~df["use_gpu"])]
-        g = df[(df["instance"] == inst_n) & (df["version"] == ver) & (df["batch_size"] == bs) & (df["use_gpu"])]
-        cpu_vals.append(float(c["time_ms"].iloc[0]) if not c.empty else np.nan)
-        gpu_vals.append(float(g["time_ms"].iloc[0]) if not g.empty else np.nan)
+    df["n"] = pd.to_numeric(df["n"], errors="coerce")
+    df["batch_size"] = pd.to_numeric(df["batch_size"], errors="coerce").fillna(128).astype(int)
+    df["use_gpu"] = df["use_gpu"].astype(str).str.lower() == "true"
+    df["t_s"] = pd.to_numeric(df["elapsed_until_abort_s"], errors="coerce")
+    df["time_ms"] = df["t_s"] * 1000.0
+    df["nodes_per_s"] = pd.to_numeric(df["nodes_expanded"], errors="coerce") / df["t_s"]
 
-    fig, ax = plt.subplots(figsize=(9.5, 4.0))
-    x = np.arange(len(keys))
-    w = 0.35
-    ax.bar(x - w / 2, cpu_vals, width=w, label="CPU (use_gpu=False)", color="#2b8cbe")
-    ax.bar(x + w / 2, gpu_vals, width=w, label="GPU / Flag --use-gpu", color="#31a354")
-    ax.set_yscale("log")
-    ax.set_title("Validação Experimental da Flag --use-gpu no Branch-and-Bound")
-    ax.set_ylabel("Tempo (ms, escala log)")
-    ax.set_xticks(x)
-    ax.set_xticklabels(labels, rotation=30, ha="right", fontsize=7)
-    ax.legend()
-    ax.grid(axis="y", alpha=0.3)
+    # Um painel por configuração do B&B; instâncias em ordem crescente de N.
+    configs = [
+        (ver, bs)
+        for ver in ["v1_gpu", "v2_dfs_memory", "v3_fast_bound"]
+        for bs in sorted(df.loc[df["version"] == ver, "batch_size"].unique())
+    ]
+    insts = list(df.sort_values(["n", "instance"])["instance"].drop_duplicates())
+    n_of = df.drop_duplicates("instance").set_index("instance")["n"]
+    xlabels = [f"{i} ({int(n_of[i])})" for i in insts]
+    timeout_ms = float(df.loc[df["status"] == "NA", "time_ms"].median()) if (df["status"] == "NA").any() else None
 
-    fig.tight_layout()
+    hatch_of = {"OPTIMAL": "", "NA": "///", "OOM": "xxx"}
+    colors = {False: "#2b8cbe", True: "#31a354"}
+    x = np.arange(len(insts))
+    w = 0.4
+
+    fig, axes = plt.subplots(2, len(configs), figsize=(3.3 * len(configs), 6.4), sharex=True, sharey="row")
+    axes = np.atleast_2d(axes).reshape(2, len(configs))
+    for col, (ver, bs) in enumerate(configs):
+        sub = df[(df["version"] == ver) & (df["batch_size"] == bs)].set_index(["instance", "use_gpu"])
+        for gpu in (False, True):
+            off = (w / 2) * (1 if gpu else -1)
+            for row, metric in enumerate(["time_ms", "nodes_per_s"]):
+                vals, hatches = [], []
+                for inst in insts:
+                    key = (inst, gpu)
+                    if key in sub.index:
+                        r = sub.loc[key]
+                        vals.append(float(r[metric]))
+                        hatches.append(hatch_of.get(str(r["status"]), ""))
+                    else:
+                        vals.append(np.nan)
+                        hatches.append("")
+                bars = axes[row, col].bar(
+                    x + off, vals, width=w, color=colors[gpu], edgecolor="white", linewidth=0.4
+                )
+                for b, h in zip(bars, hatches):
+                    b.set_hatch(h)
+        title = f"{ver} (lote {bs})" if ver == "v1_gpu" else ver
+        axes[0, col].set_title(title)
+        if timeout_ms:
+            axes[0, col].axhline(timeout_ms, color="#555555", linestyle="--", linewidth=0.8)
+        for row in range(2):
+            ax = axes[row, col]
+            ax.set_yscale("log")
+            ax.grid(axis="y", alpha=0.3)
+            ax.set_xticks(x)
+            ax.set_xticklabels(xlabels, rotation=60, ha="right", fontsize=6.5)
+
+    axes[0, 0].set_ylabel("Tempo até término (ms, log)")
+    axes[1, 0].set_ylabel("Vazão (nós expandidos/s, log)")
+    handles = [
+        Patch(facecolor=colors[False], label="CPU (NumPy)"),
+        Patch(facecolor=colors[True], label="GPU (CuPy, --use-gpu)"),
+        Patch(facecolor="white", edgecolor="black", label="Ótimo provado"),
+        Patch(facecolor="white", edgecolor="black", hatch="///", label="Limite de tempo (300 s)"),
+        Patch(facecolor="white", edgecolor="black", hatch="xxx", label="Limite de memória (4 GiB)"),
+    ]
+    fig.legend(handles=handles, loc="upper center", ncol=5, frameon=False, bbox_to_anchor=(0.5, 1.0))
+    fig.suptitle("Validação da flag --use-gpu no Branch-and-Bound (instâncias ordenadas por N)", y=1.04)
+    fig.tight_layout(rect=(0, 0, 1, 0.95))
     return _save_fig(fig, "fig6_gpu_validation", fig_dir)
 
 
@@ -360,7 +405,8 @@ def _escape_latex(val: object, float_fmt: str = "%.4f") -> str:
     if val is None or (isinstance(val, float) and np.isnan(val)):
         return "NA"
     if isinstance(val, (float, np.floating)):
-        return float_fmt % float(val)
+        # Vírgula decimal (relatório em português), como nas demais tabelas.
+        return (float_fmt % (float(val) + 0.0)).replace(".", ",")
     if isinstance(val, (int, np.integer)):
         return str(int(val))
     text = str(val)
@@ -369,13 +415,20 @@ def _escape_latex(val: object, float_fmt: str = "%.4f") -> str:
     return text
 
 
-def _dataframe_to_latex(df: pd.DataFrame, float_fmt: str = "%.4f") -> str:
-    """Serializa um DataFrame em tabela LaTeX limpa com réguas `booktabs`."""
+def _dataframe_to_latex(
+    df: pd.DataFrame, float_fmt: str = "%.4f", headers: Optional[List[str]] = None
+) -> str:
+    """Serializa um DataFrame em tabela LaTeX limpa com réguas `booktabs`.
+
+    `headers` (opcional) substitui os nomes das colunas por cabeçalhos LaTeX já prontos
+    (inseridos sem escape, permitindo `$R^2$`, `$\rho$` etc.).
+    """
     cols = list(df.columns)
     align = "".join(
         "r" if pd.api.types.is_numeric_dtype(df[c]) else "l" for c in cols
     )
-    header = " & ".join(_escape_latex(c, float_fmt) for c in cols) + r" \\"
+    head_cells = headers if headers is not None else [_escape_latex(c, float_fmt) for c in cols]
+    header = " & ".join(head_cells) + r" \\"
     lines = [
         f"\\begin{{tabular}}{{{align}}}",
         r"\toprule",
@@ -389,91 +442,167 @@ def _dataframe_to_latex(df: pd.DataFrame, float_fmt: str = "%.4f") -> str:
     return "\n".join(lines)
 
 
+def _fmt_seconds(val: object) -> str:
+    """Tempo em segundos com precisão legível (3 algarismos significativos, sem notação científica)."""
+    t = float(val)
+    if t < 0.01:
+        return "<0,01"
+    if t < 10:
+        return f"{t:.2f}".replace(".", ",")
+    if t < 100:
+        return f"{t:.1f}".replace(".", ",")
+    return f"{t:.0f}"
+
+
+def _bnb_cell(row: Optional[pd.Series], show_gap: bool = False) -> str:
+    """Célula de resultado do B&B: tempo até o ótimo, `TL` (limite de tempo) ou `OOM`."""
+    if row is None:
+        return "--"
+    status = str(row.get("status", ""))
+    if status == "OPTIMAL":
+        return _fmt_seconds(row["elapsed_until_abort_s"])
+    if status == "NA":
+        if show_gap:
+            gap = pd.to_numeric(pd.Series([row.get("final_cost_gap_pct")]), errors="coerce").iloc[0]
+            if pd.notna(gap):
+                return f"TL ({gap:.1f}\\%)".replace(".", ",")
+        return "TL"
+    if status == "OOM":
+        return "OOM"
+    return "ERR"
+
+
+def _instance_label(inst: str, n: int) -> str:
+    return f"{_escape_latex(inst)} ({int(n)})"
+
+
+def _nonempty(path: Path) -> bool:
+    """CSV existe e tem conteúdo (o ajuste de complexidade grava um CSV vazio quando não há pontos)."""
+    return path.exists() and path.stat().st_size > 2
+
+
 def export_latex_tables(results_dir: Path, tables_dir: Path) -> List[Path]:
     """Exporta tabelas resumo em formato LaTeX prontas para inclusão direta via `\\input`."""
     tables_dir.mkdir(parents=True, exist_ok=True)
     written: List[Path] = []
 
     fits_csv = results_dir / "complexity_fits.csv"
-    if fits_csv.exists():
+    if _nonempty(fits_csv):
         df_f = pd.read_csv(fits_csv)
         cols = ["series_name", "x_var", "model_name", "n_points", "r2", "rmse"]
         p = tables_dir / "tab_complexity_fits.tex"
-        p.write_text(_dataframe_to_latex(df_f[cols], float_fmt="%.4f"), encoding="utf-8")
+        p.write_text(
+            _dataframe_to_latex(
+                df_f[cols],
+                float_fmt="%.4f",
+                headers=["Série", "Variável", "Modelo", "Pontos", "$R^2$", "RMSE"],
+            ),
+            encoding="utf-8",
+        )
         written.append(p)
 
     approx_csv = results_dir / "approx_profiling.csv"
-    if approx_csv.exists():
+    if _nonempty(approx_csv):
         df_a = pd.read_csv(approx_csv)
+        algs = [
+            ("nearest_neighbor", "Viz. Próx."),
+            ("convex_hull_insertion", "Fecho Convexo"),
+            ("twice_around_v1_optimized", "Twice-Around"),
+            ("christofides_v1_optimized", "Christofides"),
+        ]
         piv = (
-            df_a[
-                df_a["algorithm"].isin(
-                    [
-                        "twice_around_v1_optimized",
-                        "christofides_v1_optimized",
-                        "nearest_neighbor",
-                        "convex_hull_insertion",
-                    ]
-                )
-            ]
+            df_a[df_a["algorithm"].isin([a for a, _ in algs])]
             .pivot(index=["instance", "n"], columns="algorithm", values="gap_pct")
             .reset_index()
             .sort_values("n")
         )
+        out = pd.DataFrame({"inst": [_instance_label(i, n) for i, n in zip(piv["instance"], piv["n"])]})
+        for alg, _ in algs:
+            # `+ 0.0` após arredondar elimina o "-0,00" de gaps numericamente nulos.
+            out[alg] = [f"{(round(float(v), 2) + 0.0):.2f}".replace(".", ",") for v in piv[alg]]
+        lines = [
+            r"\begin{tabular}{lrrrr}",
+            r"\toprule",
+            "Instância ($N$) & " + " & ".join(lbl for _, lbl in algs) + r" \\",
+            r"\midrule",
+        ]
+        lines += [" & ".join(r) + r" \\" for r in out.itertuples(index=False, name=None)]
+        lines += [r"\bottomrule", r"\end{tabular}", ""]
         p = tables_dir / "tab_approx_gaps.tex"
-        p.write_text(_dataframe_to_latex(piv, float_fmt="%.2f"), encoding="utf-8")
+        p.write_text("\n".join(lines), encoding="utf-8")
         written.append(p)
 
     sens_csv = results_dir / "sensitivity_table.csv"
-    if sens_csv.exists():
+    if _nonempty(sens_csv):
         df_s = pd.read_csv(sens_csv)
         cols_s = ["target", "feature", "spearman_r", "ridge_beta", "tree_importance", "rf_importance"]
         p = tables_dir / "tab_sensitivity.tex"
-        p.write_text(_dataframe_to_latex(df_s[cols_s], float_fmt="%.3f"), encoding="utf-8")
+        p.write_text(
+            _dataframe_to_latex(
+                df_s[cols_s],
+                float_fmt="%.3f",
+                headers=["Alvo", "Atributo", r"Spearman $\rho$", r"$\beta$ Ridge", "Imp. árvore", "Imp. RF"],
+            ),
+            encoding="utf-8",
+        )
         written.append(p)
 
     ablation_csv = results_dir / "bnb_ablation.csv"
-    if ablation_csv.exists():
+    if _nonempty(ablation_csv):
+        # Uma linha por instância; para cada versão, tempo até o ótimo (s) sem e com warm-start.
         df_ab = pd.read_csv(ablation_csv, keep_default_na=False)
-        cols_ab = [
-            c
-            for c in [
-                "instance",
-                "n",
-                "version",
-                "warm_start",
-                "status",
-                "elapsed_s",
-                "nodes_expanded",
-                "max_queue_size",
-                "process_max_rss_kb",
-            ]
-            if c in df_ab.columns
+        df_ab["n"] = pd.to_numeric(df_ab["n"])
+        versions = [("v0_naive", "v0"), ("v1_gpu", "v1"), ("v2_dfs_memory", "v2"), ("v3_fast_bound", "v3")]
+        ws_cols = [("cold_start", "Frio"), ("christofides", "Chr.")]
+        idx = df_ab.set_index(["instance", "version", "warm_start"])
+        lines = [
+            r"\begin{tabular}{l" + "rr" * len(versions) + "}",
+            r"\toprule",
+            " & " + " & ".join(rf"\multicolumn{{2}}{{c}}{{{lbl}}}" for _, lbl in versions) + r" \\",
+            "".join(rf"\cmidrule(lr){{{2 + 2 * i}-{3 + 2 * i}}}" for i in range(len(versions))),
+            "Instância ($N$) & " + " & ".join(w for _ in versions for _, w in ws_cols) + r" \\",
+            r"\midrule",
         ]
+        for inst, n in df_ab.sort_values(["n", "instance"])[["instance", "n"]].drop_duplicates().itertuples(index=False):
+            cells = [_instance_label(inst, n)]
+            for ver, _ in versions:
+                for ws, _ in ws_cols:
+                    key = (inst, ver, ws)
+                    cells.append(_bnb_cell(idx.loc[key] if key in idx.index else None))
+            lines.append(" & ".join(cells) + r" \\")
+        lines += [r"\bottomrule", r"\end{tabular}", ""]
         p = tables_dir / "tab_bnb_ablation.tex"
-        p.write_text(_dataframe_to_latex(df_ab[cols_ab].sort_values(["n", "version"]), float_fmt="%.2f"), encoding="utf-8")
+        p.write_text("\n".join(lines), encoding="utf-8")
         written.append(p)
 
     ws_csv = results_dir / "bnb_warmstart.csv"
-    if ws_csv.exists():
+    if _nonempty(ws_csv):
+        # Uma linha por instância; tempo até o ótimo (s) ou TL com o gap do incumbente final.
         df_w = pd.read_csv(ws_csv, keep_default_na=False)
-        cols_w = [
-            c
-            for c in [
-                "instance",
-                "n",
-                "warm_start",
-                "status",
-                "elapsed_s",
-                "initial_ub",
-                "nodes_expanded",
-                "nodes_pruned",
-                "prune_rate",
-            ]
-            if c in df_w.columns
+        df_w["n"] = pd.to_numeric(df_w["n"])
+        strategies = [
+            ("cold_start", "Frio"),
+            ("nearest_neighbor", "Viz. Próx."),
+            ("twice_around", "Twice-Around"),
+            ("christofides", "Christofides"),
+            ("convex_hull_insertion", "Fecho Conv."),
         ]
+        idx = df_w.set_index(["instance", "warm_start"])
+        lines = [
+            r"\begin{tabular}{l" + "r" * len(strategies) + "}",
+            r"\toprule",
+            "Instância ($N$) & " + " & ".join(lbl for _, lbl in strategies) + r" \\",
+            r"\midrule",
+        ]
+        for inst, n in df_w.sort_values(["n", "instance"])[["instance", "n"]].drop_duplicates().itertuples(index=False):
+            cells = [_instance_label(inst, n)]
+            for ws, _ in strategies:
+                key = (inst, ws)
+                cells.append(_bnb_cell(idx.loc[key] if key in idx.index else None, show_gap=True))
+            lines.append(" & ".join(cells) + r" \\")
+        lines += [r"\bottomrule", r"\end{tabular}", ""]
         p = tables_dir / "tab_bnb_warmstart.tex"
-        p.write_text(_dataframe_to_latex(df_w[cols_w].sort_values(["n", "warm_start"]), float_fmt="%.3f"), encoding="utf-8")
+        p.write_text("\n".join(lines), encoding="utf-8")
         written.append(p)
 
     return written

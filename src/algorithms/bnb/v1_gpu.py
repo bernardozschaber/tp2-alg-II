@@ -17,12 +17,19 @@ Funcionamento operacional:
 Observação estrutural: embora reduza drasticamente o tempo de cálculo do `bound` frente ao
 `v0_naive`, a fila global `heapq` continua armazenando listas de caminho de toda a fronteira
 aberta (memória crescente com a largura da árvore).
+
+Guarda de memória (`memory_limit_mb`): a cada 16 lotes o pico de RSS do processo é comparado
+com `memory_limit_mb - 256 MiB`; ao ultrapassá-lo a busca é abortada com status `OOM`. O guarda
+vale igualmente para CPU e GPU (mesmo orçamento de RAM do host para a fila) e dispara antes do
+teto `RLIMIT_AS` do worker: perto desse teto o `malloc` falha repetidamente e o processo ficava
+minutos preso no tratamento do `MemoryError`, sem nunca reportar o resultado.
 """
 
 from __future__ import annotations
 
 import heapq
 import math
+import resource
 import time
 from typing import List, Optional, Tuple
 
@@ -36,6 +43,8 @@ from src.core.profiling import ProfilerSession
 
 ALGORITHM_NAME = "bnb_v1_gpu"
 EPS = 1e-9
+MEMORY_GUARD_MARGIN_MB = 256
+MEMORY_GUARD_EVERY = 16
 
 
 def solve(
@@ -45,6 +54,7 @@ def solve(
     use_gpu: bool = True,
     batch_size: int = 128,
     profiler: Optional[ProfilerSession] = None,
+    memory_limit_mb: int = 0,
 ) -> TourResult:
     """Executa o Branch-and-Bound v1 com avaliação de lotes via GPU/NumPy vetorizado."""
     prof = profiler if profiler is not None else ProfilerSession(track_memory=False)
@@ -93,6 +103,9 @@ def solve(
     timed_out = False
     oom_aborted = False
     tie_counter = 0
+    # `ru_maxrss` é dado em KiB no Linux; 0 desativa o guarda.
+    guard_kb = max(0, memory_limit_mb - MEMORY_GUARD_MARGIN_MB) * 1024 if memory_limit_mb > 0 else 0
+    iteration = 0
 
     t_bnb_start = time.perf_counter()
     with prof.profile("bnb_tree_search"):
@@ -108,6 +121,14 @@ def solve(
                 if (time.perf_counter() - t_start) >= timeout_s:
                     timed_out = True
                     break
+
+                iteration += 1
+                if guard_kb and iteration % MEMORY_GUARD_EVERY == 0:
+                    if resource.getrusage(resource.RUSAGE_SELF).ru_maxrss >= guard_kb:
+                        if len(queue) > max_queue_size:
+                            max_queue_size = len(queue)
+                        oom_aborted = True
+                        break
 
                 if len(queue) > max_queue_size:
                     max_queue_size = len(queue)

@@ -2,3 +2,9 @@
 __pycache__/
 *.pyc
 data/results/raw/
+
+# Saidas baixadas da Flautim (juntadas em data/results com tools/juntar_resultados.py)
+*-output/
+*-output*.tar
+*:Zone.Identifier
+logs*.md

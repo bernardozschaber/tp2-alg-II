@@ -17,17 +17,24 @@ Operação empírica do módulo:
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from typing import Any, Tuple
 
 import numpy as np
 
-try:
-    import cupy as cp  # type: ignore
+# `TSP_DISABLE_GPU=1` (definido pelo runner nas execuções CPU) impede a importação do CuPy:
+# a inicialização do driver CUDA reserva gigabytes de endereço virtual e, somada ao teto
+# `RLIMIT_AS` do worker, provocava `MemoryError` espúrio (falso OOM) nas execuções CPU.
+cp = None  # type: ignore
+_HAS_CUPY = False
+if os.environ.get("TSP_DISABLE_GPU", "0") != "1":
+    try:
+        import cupy as cp  # type: ignore
 
-    _HAS_CUPY = bool(cp.cuda.is_available())
-except Exception:
-    cp = None  # type: ignore
-    _HAS_CUPY = False
+        _HAS_CUPY = bool(cp.cuda.is_available())
+    except Exception:
+        cp = None  # type: ignore
+        _HAS_CUPY = False
 
 
 @dataclass

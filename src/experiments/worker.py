@@ -80,6 +80,8 @@ def main(argv: list[str] | None = None) -> int:
     }
     if args.version == "v1":
         kwargs["batch_size"] = args.batch_size
+        # Guarda de memória da v1 (CPU e GPU): aborta com OOM antes do teto `RLIMIT_AS`.
+        kwargs["memory_limit_mb"] = args.max_memory_mb
 
     res = solver(inst, **kwargs)
     row = res.to_row()

@@ -16,6 +16,7 @@ filtrar subconjuntos via `--instances` para depuração):
 from __future__ import annotations
 
 import json
+import os
 import statistics
 import subprocess
 import sys
@@ -84,10 +85,18 @@ def _run_bnb_subprocess(
     if track_memory:
         cmd.append("--track-memory")
 
+    # Execuções CPU não devem tocar no driver CUDA: além de não precisarem da GPU, a
+    # reserva de endereço virtual do driver estoura o `RLIMIT_AS` do worker (falso OOM).
+    env = dict(os.environ)
+    if not use_gpu:
+        env["TSP_DISABLE_GPU"] = "1"
+        env["CUDA_VISIBLE_DEVICES"] = ""
+
     try:
         proc = subprocess.run(
             cmd,
             cwd=str(PROJECT_ROOT),
+            env=env,
             capture_output=True,
             text=True,
             timeout=timeout_s + 60.0,
@@ -140,6 +149,7 @@ def _run_bnb_subprocess(
         "nodes_pruned": 0,
         "max_queue_size": 0,
         "process_max_rss_kb": float(max_memory_mb * 1024) if is_oom and max_memory_mb > 0 else float("nan"),
+        "stderr_tail": " | ".join(proc.stderr.strip().splitlines()[-3:])[-400:],
     }
 
 
