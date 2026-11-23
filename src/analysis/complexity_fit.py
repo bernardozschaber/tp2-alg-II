@@ -116,8 +116,17 @@ def fit_curve(
 
     y_target = np.log10(y_clean) if model_name == "exponential_log10" else y_clean
 
+    # Nos modelos polinomiais, os termos de crescimento (todos menos o intercepto, que é o
+    # último parâmetro) ficam restritos a >= 0: um custo computacional não decresce com N.
+    # Sem a restrição, ruído em tempos sub-milissegundo produzia "quadráticas" côncavas.
+    if model_name == "exponential_log10":
+        bounds = (-np.inf, np.inf)
+    else:
+        k = len(param_names)
+        bounds = ([0.0] * (k - 1) + [-np.inf], [np.inf] * k)
+
     try:
-        popt, _ = curve_fit(fn, x_clean, y_target, maxfev=10000)
+        popt, _ = curve_fit(fn, x_clean, y_target, bounds=bounds, maxfev=10000)
     except Exception:
         return None
 
