@@ -253,11 +253,55 @@ inicial, menos inserções restam. O erro do \textit{Twice-Around-The-Tree} cres
 espacial ($\rho = 0{,}67$), e o do Christofides não tem nenhuma correlação forte com os
 descritores (todas abaixo de 0,47 em módulo), o que se espera de um algoritmo com garantia
 apertada. A previsão de $H_{TA}$ de que vértices de grau alto na AGM piorariam o
-\textit{Twice-Around-The-Tree} não se sustentou ($\rho = 0{,}03$). Esses números vêm de apenas 15
-instâncias, com descritores correlacionados entre si, e devem ser lidos como tendências.
+\textit{Twice-Around-The-Tree} não se sustentou ($\rho = 0{,}03$).
+
+Para quantificar conjuntamente o peso dos oito atributos, ajustamos para cada alvo uma
+regressão linear múltipla padronizada com regularização L2 (\textit{Ridge} sob validação
+cruzada \textit{Leave-One-Out}), uma árvore de decisão rasa (profundidade máxima~3) e uma
+floresta aleatória (Tabela~\ref{tab:sensibilidade}). Os modelos convergem quanto aos fatores
+dominantes: a variabilidade local das distâncias ao vizinho mais próximo concentra $89{,}2\%$
+da importância na árvore do gap do limite inferior na raiz (único alvo com alta generalização
+fora da amostra, $R^2_{\text{LOO}} = 0{,}82$); a proporção de pontos no fecho convexo domina
+tanto a árvore ($80{,}2\%$) quanto a floresta aleatória ($70{,}4\%$) do Fecho Convexo; a
+entropia espacial lidera a árvore do \textit{Twice-Around-The-Tree} ($80{,}6\%$, $\beta = +3{,}80$);
+e a razão de aspecto lidera a do Vizinho Mais Próximo ($73{,}7\%$). Já os valores baixos ou
+negativos de $R^2_{\text{LOO}}$ nos erros heurísticos reforçam que, com apenas 15 instâncias e
+descritores correlacionados entre si, esses ajustes têm caráter descritivo de tendências, e
+não preditivo.
+
+\begin{table}[htbp]
+  \centering
+  \caption{Resumo da modelagem de sensibilidade (15 instâncias): atributo dominante na árvore
+  de decisão, correlação de Spearman ($\rho$), peso padronizado na regressão \textit{Ridge}
+  ($\beta$), importâncias na árvore e na floresta aleatória (RF), e $R^2_{\text{LOO}}$ da
+  \textit{Ridge}.}
+  \label{tab:sensibilidade}
+  \scriptsize
+  \resizebox{\linewidth}{!}{%
+  \begin{tabular}{llrrrrr}
+    \toprule
+    Variável-alvo & Atributo dominante (árvore) & $\rho$ & $\beta$ Ridge & Imp. árvore & Imp. RF & $R^2_{\text{LOO}}$ \\
+    \midrule
+    Gap \textit{Twice-Around} & Entropia espacial & $0{,}67$ & $+3{,}80$ & $0{,}81$ & $0{,}24$ & $0{,}13$ \\
+    Gap Christofides & Proporção de vértices ímpares & $0{,}36$ & $+0{,}34$ & $0{,}68$ & $0{,}18$ & $-0{,}14$ \\
+    Gap Vizinho Mais Próx. & Razão de aspecto & $0{,}48$ & $+0{,}54$ & $0{,}74$ & $0{,}26$ & $-0{,}88$ \\
+    Gap Fecho Convexo & Proporção no fecho convexo & $-0{,}70$ & $-0{,}94$ & $0{,}80$ & $0{,}70$ & $-0{,}18$ \\
+    Gap do limite na raiz & CV dist.\ vizinho mais próx. & $0{,}90$ & $+2{,}07$ & $0{,}89$ & $0{,}24$ & $0{,}82$ \\
+    \bottomrule
+  \end{tabular}%
+  }
+\end{table}
 
 \subsection{Bateria D: Validação da Aceleração em GPU}
 \label{sec:res_gpu}
+
+\begin{figure}[!htbp]
+  \centering
+  \includegraphics[width=\linewidth]{figures/fig6_gpu_validation.pdf}
+  \caption{Bateria D. Tempo até o término (acima) e vazão em nós expandidos por segundo
+  (abaixo), em CPU e GPU, para cada configuração. Instâncias ordenadas por $N$.}
+  \label{fig:gpu}
+\end{figure}
 
 A GPU não acelerou nenhuma versão (Figura~\ref{fig:gpu}). Nas instâncias pequenas, ela atrasou
 a execução: em \texttt{eil51\_n10}, a \texttt{v1} levou 2,1~s na GPU contra 4~ms na CPU, quase
@@ -271,13 +315,4 @@ pouco para ocupar a GPU, e a fila continua sendo manipulada na CPU. Com o teto d
 igual nos dois lados, a \texttt{v1} esgotou os 4~GiB exatamente nas mesmas 11 instâncias, em CPU
 e em GPU. Nesse regime de $N \le 70$, o gargalo é a explosão combinatória da árvore e o custo
 por nó no interpretador, e não a aritmética do limite inferior.
-
-\begin{figure}[htbp]
-  \centering
-  \IfFileExists{figures/fig6_gpu_validation.pdf}{%
-    \includegraphics[width=\linewidth]{figures/fig6_gpu_validation.pdf}%
-  }{\todoLab{Figura 6 ainda não gerada}}
-  \caption{Bateria D. Tempo até o término (acima) e vazão em nós expandidos por segundo
-  (abaixo), em CPU e GPU, para cada configuração. Instâncias ordenadas por $N$.}
-  \label{fig:gpu}
-\end{figure}
+\FloatBarrier

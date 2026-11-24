@@ -23,6 +23,7 @@
 \usepackage{booktabs}
 \usepackage{array}
 \usepackage{xcolor}
+\usepackage{placeins}
 \usepackage{hyperref}
 
 \hypersetup{
@@ -33,21 +34,6 @@
 }
 
 \sloppy
-
-% Macros auxiliares para placeholders do restante do grupo e pendências dos experimentos.
-\newcommand{\placeholderGrupo}[1]{%
-  \begin{center}
-    \fcolorbox{blue!50!black}{blue!5}{%
-      \begin{minipage}{0.94\linewidth}
-        \small\textbf{[PLACEHOLDER -- INTEGRANTE DO GRUPO]} #1
-      \end{minipage}%
-    }
-  \end{center}
-}
-
-\newcommand{\todoLab}[1]{%
-  \textcolor{red!70!black}{\textbf{[AGUARDANDO LABORATÓRIO: #1]}}%
-}
 
 % Inclusão condicional de figuras e tabelas geradas automaticamente por `python -m src.cli analyze`.
 \newcommand{\includeFigIfExists}[4]{%
@@ -136,11 +122,7 @@ adversariais.
 \input{sections/02e_instrumentacao}
 
 \input{sections/03_resultados}
-
-\section{Conclusões}
-\label{sec:conclusoes}
-
-\todoLab{Seção reservada para a síntese conclusiva após a consolidação experimental e integração da parte do \textit{Twice-Around-The-Tree}.}
+\input{sections/04_conclusoes}
 
 \bibliographystyle{sbc}
 \bibliography{references}
