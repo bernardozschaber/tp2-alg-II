@@ -65,12 +65,19 @@ tp2-alg-II/
 │       ├── complexity_fit.py              # Regressão não linear por mínimos quadrados (R² e RMSE)
 │       ├── sensitivity.py                 # RidgeCV (LOO), Árvore de Decisão e Random Forest
 │       └── plots.py                       # Geração automatizada das figuras e tabelas
-└── tests/                                 # Suíte de verificação (29 testes unitários)
-    ├── oracles.py                         # Oráculos exatos para instâncias pequenas
-    ├── test_stage1_core.py                # Testes de base de dados, parser, profiling e utilitários GPU
-    ├── test_stage2_approximations.py      # Testes de Twice-Around, Christofides, Graham Scan e warm-starts
-    ├── test_stage3_bnb.py                 # Testes de exatidão e equivalência entre B&B v0–v3 e Held-Karp
-    └── test_stage4_analysis.py            # Testes de features, regressões, sensibilidade, worker e plots
+├── tests/                                 # Suíte de verificação (29 testes unitários)
+│   ├── oracles.py                         # Oráculos exatos para instâncias pequenas
+│   ├── test_stage1_core.py                # Testes de base de dados, parser, profiling e utilitários GPU
+│   ├── test_stage2_approximations.py      # Testes de Twice-Around, Christofides, Graham Scan e warm-starts
+│   ├── test_stage3_bnb.py                 # Testes de exatidão e equivalência entre B&B v0–v3 e Held-Karp
+│   └── test_stage4_analysis.py            # Testes de features, regressões, sensibilidade, worker e plots
+├── tools/                                 # Scripts auxiliares de empacotamento e consolidação de resultados
+│   ├── empacotar_flautim.sh               # Gera `upload-flautim2/tp2_codigo.zip` com `src/` e `data/tsplib/`
+│   └── juntar_resultados.py               # Mescla e deduplica CSVs de múltiplos jobs em `data/results/`
+└── upload-flautim2/                       # Pacote de execução das baterias na plataforma Flautim (GPU H200)
+    ├── run.py                             # Orquestrador remoto das Baterias A–D + `analyze` (retomada via tag)
+    ├── plataforma.py                      # Infraestrutura de cgroup, logs, `EXP_*` e escrita atômica de JSON
+    └── requirements.txt                   # Dependências fixadas para Python 3.11 + CuPy/wheels NVIDIA CUDA 12
 ```
 
 ---
